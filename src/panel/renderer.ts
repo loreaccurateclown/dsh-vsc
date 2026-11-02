@@ -104,14 +104,61 @@ function splitTopLevel(html: string): TopNode[] {
   return nodes;
 }
 
-/** Unwrap <p>…</p> into bare text (pre-wrap keeps the line structure) and
- *  turn remote markdown images into links (CSP img-src blocks http). */
-function pText(pHtml: string): string {
-  let inner = pHtml.replace(/^<p>/, "").replace(/<\/p>$/, "");
-  inner = inner.replace(/<img\s+src="([^"']+)"[^>]*>/g, (m, url: string) =>
-    url.startsWith("data:") ? m : `<a class="md-img-link" href="${url}">[图片]</a>`
+/** Whether a markdown image URL names a file on this machine. The webview
+ *  cannot load those (CSP blocks file:// / drive paths), so the panel asks the
+ *  extension host for the bytes instead of showing a broken-image icon. */
+function isLocalImagePath(url: string): boolean {
+  const bare = url.replace(/^file:\/\//i, "");
+  let decoded = bare;
+  try {
+    decoded = decodeURIComponent(bare);
+  } catch {
+    /* keep the raw form */
+  }
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/[^/])/.test(decoded);
+}
+
+/** Relative sentinel that survives micromark's URI sanitizer. A drive-letter
+ *  or file: destination is replaced by `""` during compilation (measured:
+ *  `![a](C:/x.png)` → `<img src="">`), which is exactly the broken-image row
+ *  this whole path exists to remove. Rewriting the destination to a relative
+ *  URL first keeps the path intact through parsing. */
+const LOCAL_IMAGE_SENTINEL = "/dsh-local/";
+
+/** Rewrite local image destinations into the sentinel form before parsing. */
+function encodeLocalImageTargets(md: string): string {
+  return md.replace(/(!\[[^\]]*\]\()\s*<?([^)>\s]+)>?\s*(\))/g, (whole, head: string, dest: string, tail: string) =>
+    isLocalImagePath(dest) ? `${head}${LOCAL_IMAGE_SENTINEL}${encodeURIComponent(dest)}${tail}` : whole
   );
-  return inner;
+}
+
+/** Rewrite every markdown <img> in an HTML fragment: remote sources become
+ *  links (CSP img-src blocks http), local files become `data-local-src`
+ *  placeholders the panel hydrates through the host. Runs on the WHOLE
+ *  fragment, not just top-level paragraphs — images inside list items or
+ *  quotes would otherwise reach the webview as an unloadable src. */
+function rewriteImages(html: string): string {
+  return html.replace(/<img\s+src="([^"]*)"([^>]*)>/g, (m, url: string, rest: string) => {
+    if (url.startsWith("data:")) return m;
+    if (url.startsWith(LOCAL_IMAGE_SENTINEL)) {
+      let target = url.slice(LOCAL_IMAGE_SENTINEL.length);
+      try {
+        target = decodeURIComponent(target);
+      } catch {
+        /* keep the encoded form */
+      }
+      return `<img class="md-img" data-local-src="${target.replace(/"/g, "&quot;")}"${rest}>`;
+    }
+    if (isLocalImagePath(url)) return `<img class="md-img" data-local-src="${url.replace(/"/g, "&quot;")}"${rest}>`;
+    if (url === "") return m;
+    return `<a class="md-img-link" href="${url}">[图片]</a>`;
+  });
+}
+
+/** Unwrap <p>…</p> into bare text (pre-wrap keeps the line structure) and
+ *  rewrite markdown images the same way {@link rewriteImages} does. */
+function pText(pHtml: string): string {
+  return rewriteImages(pHtml.replace(/^<p>/, "").replace(/<\/p>$/, ""));
 }
 
 /** Map a block node onto the panel's class structure (same classes the old
@@ -139,7 +186,7 @@ function mapBlock(html: string): string {
 export function renderMd(text: string): string {
   const src = String(text ?? "");
   if (src.trim() === "") return "";
-  const fragment = micromark(src, {
+  const fragment = micromark(encodeLocalImageTargets(src), {
     extensions: [gfm()],
     htmlExtensions: [gfmHtml()],
     allowDangerousHtml: false,
@@ -158,7 +205,7 @@ export function renderMd(text: string): string {
       out += mapBlock(n.html);
     }
   }
-  return out.replace(/\n+$/u, "");
+  return rewriteImages(out).replace(/\n+$/u, "");
 }
 
 // Expose to the panel's inline scripts (they call DshMd.render).

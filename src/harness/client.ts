@@ -190,9 +190,18 @@ export class HarnessClient {
     return this.call(METHODS.workspaceInitializeDefault, {});
   }
 
-  /** Archive a session (DSH's delete: hides it from session/workspace lists). */
-  archiveSession(sessionId: string): Promise<{ archivedSessionIds: string[] }> {
-    return this.call(METHODS.workspaceArchiveSession, { request: { sessionId } });
+  /**
+   * Archive a session (DSH's delete: hides it from session/workspace lists).
+   *
+   * 0.2.1 refuses the archive with `WorkspaceActiveSessionError` while the
+   * `workspace/session-activity` waterfall reports anything running (a turn,
+   * subagents, owned jobs, schedules). `stopActivity` is the official client's
+   * delete path: the stops are requested and the archive set is written anyway.
+   */
+  archiveSession(sessionId: string, options?: { stopActivity?: boolean }): Promise<{ archivedSessionIds: string[] }> {
+    const request: { sessionId: string; stopActivity?: boolean } = { sessionId };
+    if (options?.stopActivity) request.stopActivity = true;
+    return this.call(METHODS.workspaceArchiveSession, { request });
   }
 
   cancel(sessionId: string): Promise<{ accepted: true }> {

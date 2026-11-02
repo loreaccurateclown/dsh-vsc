@@ -83,8 +83,10 @@ export class HarnessEventStream implements vscode.Disposable {
   onAnswerableSettled: (eventId: string) => void = () => {};
   /** Forwarded Host events (`api-session/added`, `api-session/status`, …). */
   onHostEvent: (event: string, args: unknown[]) => void = () => {};
-  /** Workspace rows from the follow baseline. */
-  onWorkspaces: (items: WorkspaceView[]) => void = () => {};
+  /** Workspace baseline: the rows AND the registry-global archive set. */
+  onWorkspaces: (baseline: { items: WorkspaceView[]; archivedSessionIds?: readonly string[] }) => void = () => {};
+  /** The archive set alone, republished after an archive/unarchive. */
+  onArchived: (archivedSessionIds: readonly string[]) => void = () => {};
   onError: (message: string) => void = () => {};
   /** Fired when a (re)connection succeeds — status bar can flip back online. */
   onOpen: () => void = () => {};
@@ -310,15 +312,37 @@ export class HarnessEventStream implements vscode.Disposable {
   /* -------------------------------------------------- workspace/follow */
 
   private handleWorkspaceFrame(value: Record<string, unknown>): void {
-    if (value.type !== "baseline") {
-      // `upsert` / archive changes: the session list and the archived set can
-      // both move, so the host re-reads them (cheap) rather than modelling the
-      // frame here.
+    // 0.2.1 `WorkspaceFollowIncrement`:
+    //    { type: "baseline" | "replace", value: { items, archivedSessionIds, pinnedSessionIds } }
+    //    { type: "archived", archivedSessionIds }   ← NOT under `value`
+    //    { type: "upsert" | "remove" | "order", … }
+    // The archive set used to ride the session rows; reading it off `items`
+    // (an array) yielded undefined forever, so an archived row never left the
+    // sidebar.
+    const type = value.type;
+    if (type === "baseline" || type === "replace") {
+      const baseline = value.value as
+        | { items?: unknown; archivedSessionIds?: unknown }
+        | undefined;
+      if (baseline && Array.isArray(baseline.items)) {
+        this.onWorkspaces({
+          items: baseline.items as WorkspaceView[],
+          archivedSessionIds: Array.isArray(baseline.archivedSessionIds)
+            ? (baseline.archivedSessionIds as string[])
+            : undefined,
+        });
+      }
+      return;
+    }
+    if (type === "archived") {
+      const ids = value.archivedSessionIds;
+      if (Array.isArray(ids)) this.onArchived(ids.map(String));
       this.onHostEvent("workspace/changed", [value]);
       return;
     }
-    const items = (value.value as { items?: WorkspaceView[] } | undefined)?.items;
-    if (Array.isArray(items)) this.onWorkspaces(items);
+    // `upsert` / `remove` / `order`: the session list can move, so the host
+    // re-reads it (cheap) rather than modelling the frame here.
+    this.onHostEvent("workspace/changed", [value]);
   }
 
   /* --------------------------------------------------- session/follow */

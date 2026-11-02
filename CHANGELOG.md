@@ -8,6 +8,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - _(nothing yet)_
 
+## [0.3.14] - 2026-10-29
+
+- Fix: the composer status line at the bottom of the panel (context ring, rounds/steps, LLM & tool time, first-token, tok/s, token totals — and the running turn's `+N-M`) stopped appearing after the 0.2.1 migration. Two independent causes: the panel only ever read those three metrics out of a full session-list `state` message, so the line stayed empty unless a refresh happened to land after the values were already cached — an idle session never refreshes; and `tokenUsage` moved from flat counters to `{totals, last}`, so the token group was reading undefined fields. The host now pushes `sessionMetrics` the moment `tokenUsage` / `sessionStats` / `contextPressure` arrive (session follow snapshot or control stream), and the panel reads `totals` while still accepting the old flat shape.
+
+## [0.3.13] - 2026-10-29
+
+Copy path audited end to end; the 0.3.12 shape had a real defect that showed up as "the first Ctrl+C works, the rest do nothing".
+
+- Fix: the `copy` handler cancelled the platform default on **every** copy while the host write was still in flight, so a copy had exactly one way to reach the clipboard and no way to report that it hadn't. The default is now left alone except when the selection actually carries an inlined image (the multi-MB `data:` URL is the only case where the platform write misbehaves), and the host write runs alongside it instead of replacing it. The two writing paths can no longer cancel each other out.
+- Add: a second trigger for the transcript path — `keydown` Ctrl/Cmd+C — so a copy does not depend on the webview dispatching a `copy` event at all. Overlapping triggers for the same selection within 600 ms are deduped, so one keystroke is one write.
+- Add: the host now **proves** each copy by reading the clipboard back (`vscode.env.clipboard.readText`, CRLF-normalized, one retry after 80 ms) and logs `copy N chars → verified` or the failure reason to the output channel. A mismatch is shown as an error row in the transcript instead of being swallowed: "剪贴板里不是刚复制的内容（要求 N 字符，回读 M 字符）".
+- Fix: `copyText` was handled *after* the harness-connection gate, so a copy attempted while the harness was down turned into a "harness 未连接" error and wrote nothing. Clipboard work is local and now handled before that gate.
+- Fix: the block copy button lives *inside* the `<pre>`, so `pre.textContent` ends with the button's own label. The old regex stripped only the literal `⧉ 复制`; after a click the label becomes `复制中…` / `✓ 已复制`, so clicking twice quickly copied the label into the clipboard. The button node is now removed from a clone before the text is read.
+- Fix: tool-result copy buttons had both an inline handler and the delegated one, writing the clipboard twice per click; the inline handler is gone. Message-level and queue copy buttons now report success/failure like the block buttons do.
+- Fix: `post()` swallows a `postMessage` throw, which is indistinguishable from a copy that silently did nothing. `requestCopy` calls the API directly and turns a throw into a visible error row.
+
+## [0.3.12] - 2026-10-28
+
+- Fix: copying from the panel no longer goes through the webview's clipboard at all. 0.3.10 tried to help by calling `clipboardData.setData("text/plain")` inside the `copy` event and cancelling the default; the write was still dropped, so both the box's `⧉ 复制` button and Ctrl+C left the clipboard unchanged with nothing to look at. The panel now posts the text to the extension host, which writes it with `vscode.env.clipboard.writeText` (Node side, outside the sandboxed webview) and answers `copyResult`; a copy button reports "✓ 已复制" only after that lands, and "✗ 复制失败" plus the reason when it does not. Ctrl+C keeps the platform path when the selection is inside the message input, where `window.getSelection()` is empty.
+
+## [0.3.11] - 2026-10-27
+
+- Fix: deleting a session no longer does nothing. The archive itself always reached the host (the registry holds 68 archived ids on this machine), but the sidebar never stopped drawing the row, because the archive set is read from the wrong place in both directions. Inbound, DSH 0.2.1 moved `archivedSessionIds` from the session rows to the `workspace/follow` **baseline** — and the bridge passed only `items` to its workspace handler, then read `archivedSessionIds` off that array, an always-`undefined` property; the standalone `{type:"archived"}` frame (which carries the set at the frame's top level, not under `value`) was dropped into a plain list refresh. Outbound, the archive RPC already answers with the complete durable set and we ignored it. So `archived` was an empty set forever, and every refresh re-added the row you just deleted. All three paths are now wired; the delete also passes `stopActivity: true` like the official delete button, so a session with a running turn/job/subagent archives instead of erroring `workspace/session-active`.
+- Fix (0.3.10, superseded by 0.3.12): images inlined as multi-MB `data:` URLs made the default HTML-flavor clipboard write fail silently. Writing the plain-text flavor from the page did not survive either; the host now owns the clipboard.
+
+## [0.3.6] - 2026-10-25 (released as 0.3.9)
+
+- Fix: images the assistant links by local path (`![alt](D:\ComfyUI\output\x.png)`) now render in the sidebar instead of a broken-image icon with the alt text. Two layers were broken: the markdown compiler (micromark) **sanitizes any non-http destination to `src=""`** — measured, `![a](C:/x.png)` → `<img src="">`, so the path never even reached the panel — and a webview can never load `file://`/drive paths anyway. Destinations are now rewritten to a relative `/dsh-local/<encoded>` sentinel before parsing, turned back into `data-local-src` placeholders after, and the host reads the bytes into a `data:` URL — extension allow-listed (png/jpg/jpeg/webp/gif/bmp/avif), 16 MB cap, failure degrades to a labelled placeholder. Harness-stored attachments (user uploads) keep using `session.attachment`; this path is only for files the model referenced on disk.
+- Fix: image layout. The sizing rule was keyed on `[data-local-src]`, an attribute hydration deletes once the bytes arrive — so every loaded image fell back to its natural size (a 1024px render filled the whole transcript and stacked on the next one). Images now carry a `md-img` class that survives hydration: `display:block` (two images can never share a line box), `max-width:100%`, `max-height:420px`, `object-fit:contain`, `height:auto`.
+
+## [0.3.5] - 2026-10-25
+
+- Fix: the panel could stay offline for the whole session when the harness was merely slow. Measured on a cold Windows boot: the auto-started `dsh web` printed its authenticated URL **after** the old 30 s readiness timeout, and the third such timeout disabled auto-retry *and stopped scheduling any further probe* — a live harness nobody ever looked at again. The readiness budget is now 90 s, and giving up spawning no longer stops the slow liveness poll (15 s), so a late harness still connects on its own.
+
+## [0.3.4] - 2026-10-25
+
+- Fix: the panel no longer spins forever when a harness we spawned outlives the window that spawned it. DSH 0.2.1 mints the launch token per process and the extension keeps it in memory only, so after a VS Code restart the surviving instance answered every probe with 401 — "alive" was enough to attach, and the attach had no credential. When the live instance is our own (pid record) and this window holds no token (`dshVsc.token` unset), it is now recycled and started fresh instead of being attached tokenless.
+
+## [0.3.3] - 2026-10-24
+
+- Fix: sidebar titles no longer turn into "session + id" after a host restart. `session/list` rows carry projection hints (`projections.values.title/tokenUsage/sessionStats/contextPressure`, read from the host's durable cache), but the sidebar read only the extension's in-memory store, which is filled by push frames — empty right after a restart. Rows are now seeded from their own hints before mapping; live events still supersede them. No host change and no data change: 149 of 169 stored logs already carry `session/title`, and the host's cache serves them either way.
+
 ## [0.3.2] - 2026-10-24
 
 - Fix: history paging no longer guesses the log cut. It waits for the follow snapshot's cursor, and if the host still rejects the cut it retries with the cursor the host names in its own error (`session page through seq N is past cursor M`). Before, a `migration-required` session surfaced as a bare `gateway/bad-request`.

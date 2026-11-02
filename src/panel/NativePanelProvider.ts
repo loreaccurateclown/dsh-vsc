@@ -199,6 +199,24 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         // list render (title / tokenUsage / sessionStats / contextPressure).
         const data = (event.data ?? {}) as { key?: unknown; value?: unknown };
         if (typeof data.key === "string") this.rememberProjection(sessionId, data.key, data.value);
+        // The composer's status line (context ring / rounds / timings / tokens)
+        // is fed by these three units. They used to reach the panel only on the
+        // next full session-list refresh, and the list rows carry them as bare
+        // hints — so the line stayed empty unless a refresh happened to land
+        // while the values were already cached.
+        if (
+          data.key === "tokenUsage" ||
+          data.key === "sessionStats" ||
+          data.key === "contextPressure"
+        ) {
+          this.post({
+            type: "sessionMetrics",
+            sessionId,
+            usage: this.projectionValue(sessionId, "tokenUsage"),
+            stats: this.projectionValue(sessionId, "sessionStats"),
+            context: this.projectionValue(sessionId, "contextPressure"),
+          });
+        }
         if (data.key === "todos") {
           this.todos = Array.isArray(data.value) ? (data.value as TodoItem[]) : [];
           this.post({ type: "todos", sessionId, items: this.todos });
@@ -390,17 +408,30 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       const archived = this.archivedSessionIds;
       let sessions = items
         .filter((item) => !item.blank && item.origin !== "subagent" && !archived.has(item.sessionId))
-        .map((item) => ({
-          sessionId: item.sessionId,
-          running: item.running,
-          blank: item.blank,
-          updatedAt: item.updatedAt,
-          title: this.projectionValue<string>(item.sessionId, "title") ?? undefined,
-          usage: this.projectionValue<PanelSession["usage"]>(item.sessionId, "tokenUsage"),
-          stats: this.projectionValue<PanelSession["stats"]>(item.sessionId, "sessionStats"),
-          context: this.projectionValue<PanelSession["context"]>(item.sessionId, "contextPressure"),
-          agentPreset: undefined,
-        }))
+        .map((item) => {
+          // Seed from the row's own hints BEFORE reading: the local store only
+          // sees push frames, so after a host restart every row rendered as
+          // "会话 + id" until its session happened to be opened. The host labels
+          // these "cached" (last durable checkpoint); any live event for the
+          // same key supersedes them.
+          const hints = item.projections?.values;
+          if (hints) {
+            for (const [key, value] of Object.entries(hints)) {
+              this.rememberProjection(item.sessionId, key, value);
+            }
+          }
+          return {
+            sessionId: item.sessionId,
+            running: item.running,
+            blank: item.blank,
+            updatedAt: item.updatedAt,
+            title: this.projectionValue<string>(item.sessionId, "title") ?? undefined,
+            usage: this.projectionValue<PanelSession["usage"]>(item.sessionId, "tokenUsage"),
+            stats: this.projectionValue<PanelSession["stats"]>(item.sessionId, "sessionStats"),
+            context: this.projectionValue<PanelSession["context"]>(item.sessionId, "contextPressure"),
+            agentPreset: undefined,
+          };
+        })
         .sort((a, b) => b.updatedAt - a.updatedAt);
       // A freshly created session is blank until its first prompt; keep it
       // visible as the active session instead of silently reverting.
@@ -463,6 +494,12 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async onMessage(message: WebviewMessage): Promise<void> {
+    // Clipboard work is local to the window and must not depend on the harness
+    // being reachable — "harness 未连接" used to swallow a copy outright.
+    if (message.type === "copyText") {
+      await this.handleCopy(message.text, message.requestId);
+      return;
+    }
     if (!this.client) {
       this.post({ type: "error", message: "harness 未连接" });
       return;
@@ -535,6 +572,51 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
+      case "readImage": {
+        // The assistant links images by absolute path (`![alt](D:\out\x.png)`)
+        // and a webview can never load a file:// path — CSP blocks it and the
+        // row degrades to a broken-image icon. Read it here and hand the panel
+        // a data: URL. Extensions are allow-listed so a message can never turn
+        // this into an arbitrary file read.
+        try {
+          const raw = String(message.path ?? "").trim();
+          if (!raw) throw new Error("空路径");
+          let decoded = raw;
+          try {
+            decoded = decodeURIComponent(raw);
+          } catch {
+            /* already decoded */
+          }
+          const abs = path.isAbsolute(decoded) ? decoded : path.resolve(decoded);
+          const mime: Record<string, string> = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".bmp": "image/bmp",
+            ".avif": "image/avif",
+          };
+          const type = mime[path.extname(abs).toLowerCase()];
+          if (!type) throw new Error(`不支持的图片类型：${path.extname(abs) || "（无扩展名）"}`);
+          const stat = fs.statSync(abs);
+          if (!stat.isFile()) throw new Error("不是文件");
+          if (stat.size > 16 * 1024 * 1024) throw new Error(`图片过大：${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+          this.post({
+            type: "imageData",
+            requestId: message.requestId,
+            mediaType: type,
+            data: fs.readFileSync(abs).toString("base64"),
+          });
+        } catch (error) {
+          this.post({
+            type: "imageData",
+            requestId: message.requestId,
+            error: describeHarnessFailure("读取本地图片失败", error),
+          });
+        }
+        break;
+      }
       case "newSession": {
         try {
           const workspaceId = await this.resolveWorkspaceId();
@@ -555,7 +637,18 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       case "deleteSession": {
         if (!this.activeSessionId) break;
         try {
-          await this.client.archiveSession(message.sessionId);
+          // Delete == archive. `stopActivity` matches the official client's
+          // delete button: 0.2.1 otherwise refuses with WorkspaceActiveSessionError
+          // while the session still has a running turn / job / subagent.
+          const { archivedSessionIds } = await this.client.archiveSession(message.sessionId, {
+            stopActivity: true,
+          });
+          // The RPC answers with the complete durable archive set — adopt it
+          // here rather than waiting for the workspace follow frame, so the
+          // row is gone by the time `refresh()` rebuilds the list.
+          if (Array.isArray(archivedSessionIds)) {
+            this.archivedSessionIds = new Set(archivedSessionIds);
+          }
           if (this.activeSessionId === message.sessionId) {
             this.activeSessionId = null;
             this.followActive();
@@ -566,12 +659,6 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
-      case "copyText":
-        void vscode.env.clipboard.writeText(message.text).then(
-          () => undefined,
-          (error) => this.post({ type: "error", message: describeHarnessFailure("复制失败", error) })
-        );
-        break;
       case "askPick": {
         const context = this.askContext;
         this.askContext = null;
@@ -1148,6 +1235,45 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       sessions: this.sessions.map((s) => ({ ...s, title: this.titles.get(s.sessionId) ?? s.title })),
       activeSessionId: this.activeSessionId,
     });
+  }
+
+  /**
+   * Write the clipboard from the extension host and VERIFY it by reading back.
+   *
+   * The webview's own clipboard write is unobservable — Chromium drops it
+   * silently, which is how a copy can "succeed" while the clipboard keeps its
+   * previous content. Doing the write here makes the outcome knowable, and the
+   * read-back makes it provable; a mismatch is surfaced instead of swallowed.
+   * Windows newline normalisation (`\n` → `\r\n` on write) is not a failure.
+   */
+  private async handleCopy(text: string, requestId?: string): Promise<void> {
+    const normalise = (value: string): string => value.replace(/\r\n/g, "\n");
+    const readBack = async (): Promise<string | undefined> => {
+      try {
+        return await vscode.env.clipboard.readText();
+      } catch {
+        return undefined; // an unreadable clipboard says nothing about the write
+      }
+    };
+    let failure: string | undefined;
+    try {
+      await vscode.env.clipboard.writeText(text);
+      const first = await readBack();
+      if (first !== undefined && normalise(first) !== normalise(text)) {
+        // Give the OS a beat: a write that lands late must not be reported as
+        // a failure.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const second = await readBack();
+        if (second !== undefined && normalise(second) !== normalise(text)) {
+          failure = `剪贴板里不是刚复制的内容（要求 ${text.length} 字符，回读 ${second.length} 字符）`;
+        }
+      }
+    } catch (error) {
+      failure = describeHarnessFailure("复制失败", error);
+    }
+    this.log(`copy ${text.length} chars → ${failure ?? "verified"}`);
+    if (failure) this.post({ type: "error", message: failure });
+    if (requestId) this.post({ type: "copyResult", requestId, ok: failure === undefined, error: failure });
   }
 
   private post(message: HostMessage): void {

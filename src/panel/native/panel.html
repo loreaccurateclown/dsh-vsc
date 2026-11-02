@@ -205,6 +205,13 @@
   .body a { color: var(--vscode-textLink-foreground, #3794ff); text-decoration: none; cursor: pointer; }
   .body a:hover { text-decoration: underline; }
   .body a.md-img-link { color: var(--muted); font-size: 12px; }
+  /* Markdown images (local or remote): block-level so two of them can never
+     share a line box, width-capped so a 1024px render fits the panel, and
+     auto height so the aspect ratio is preserved. */
+  .body img.md-img { display: block; width: auto; height: auto;
+    max-width: 100%; max-height: 420px; object-fit: contain;
+    margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  .body img.md-img:not([src]) { width: 180px; height: 100px; }
   .body input[type="checkbox"] { vertical-align: middle; margin: 0 4px 0 0; }
 
   /* block-level copy buttons (markdown code blocks + tool args/result) */
@@ -536,9 +543,35 @@
      src/panel/renderer.ts). This wrapper is just a call + escape fallback. */
   function renderMd(text) {
     try {
-      if (window.DshMd) return window.DshMd.render(text);
+      if (window.DshMd) { var html = window.DshMd.render(text); scheduleLocalImages(); return html; }
     } catch (e) {}
     return esc(text);
+  }
+
+  /* ---------- local images referenced by path ----------
+     The assistant links files like `![alt](D:\out\shot.png)`. A webview can
+     never load those (CSP), so renderer.ts leaves them as data-local-src
+     placeholders and we ask the extension host for the bytes once. */
+  var localImgSeq = 1;
+  var localImgWaiters = {};
+  var localImgScheduled = false;
+  function hydrateLocalImages() {
+    localImgScheduled = false;
+    var nodes = document.querySelectorAll("img[data-local-src]:not([data-hydrated])");
+    for (var i = 0; i < nodes.length; i++) {
+      var img = nodes[i];
+      img.setAttribute("data-hydrated", "1");
+      var src = img.getAttribute("data-local-src");
+      if (!src) continue;
+      var reqId = localImgSeq++;
+      localImgWaiters[reqId] = img;
+      post({ type: "readImage", requestId: reqId, path: src });
+    }
+  }
+  function scheduleLocalImages() {
+    if (localImgScheduled) return;
+    localImgScheduled = true;
+    (window.requestAnimationFrame || function (fn) { setTimeout(fn, 16); })(hydrateLocalImages);
   }
 
   /* ---------- helpers on event payloads ---------- */
@@ -1328,7 +1361,7 @@
       acp.textContent = "⧉ 复制";
       acp.onclick = function () {
         var all = item.blocks.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n");
-        post({ type: "copyText", text: all });
+        copyWithFeedback(acp, all);
       };
       aa.appendChild(acp);
       el.appendChild(aa);
@@ -1387,7 +1420,8 @@
     cp.className = "block-copy";
     cp.textContent = "⧉ 复制";
     cp.title = "复制 " + label;
-    cp.onclick = function () { post({ type: "copyText", text: text }); };
+    // No inline handler: `.block-copy` clicks are handled once by the
+    // delegated listener on messagesEl (which also reports success/failure).
     w.appendChild(lab);
     w.appendChild(pre);
     // Anchor the copy button INSIDE the relative pre (`.tool pre` is position:
@@ -1674,7 +1708,7 @@
           if (item.text) {
             var cp = document.createElement("button");
             cp.textContent = "⧉ 复制";
-            cp.onclick = function () { post({ type: "copyText", text: item.text }); };
+            cp.onclick = function () { copyWithFeedback(cp, item.text); };
             ua.appendChild(cp);
           }
           if (ua.childNodes.length) el.appendChild(ua);
@@ -1721,7 +1755,7 @@
           acp.textContent = "⧉ 复制";
           acp.onclick = function () {
             var all = item.blocks.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n");
-            post({ type: "copyText", text: all });
+            copyWithFeedback(acp, all);
           };
           aa.appendChild(acp);
           el.appendChild(aa);
@@ -1835,14 +1869,18 @@
   messagesEl.addEventListener("click", function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest(".block-copy") : null;
     if (!btn) return;
-    var pre = btn.closest("pre") || btn.parentElement && btn.parentElement.querySelector("pre");
-    var text = pre ? pre.textContent.replace(/⧉ 复制$/, "").trim() : "";
-    if (text) {
-      post({ type: "copyText", text: text });
-      var old = btn.textContent;
-      btn.textContent = "✓ 已复制";
-      setTimeout(function () { btn.textContent = old; }, 1200);
-    }
+    var pre = btn.closest("pre") || (btn.parentElement && btn.parentElement.querySelector("pre"));
+    if (!pre) return;
+    // The button lives INSIDE the <pre>, so its own label ("⧉ 复制", and now
+    // "复制中…" / "✓ 已复制") is part of textContent. Strip the button node
+    // instead of pattern-matching a label that changes while a copy is in
+    // flight — otherwise a second click copies "复制中…" into the clipboard.
+    var clone = pre.cloneNode(true);
+    var inner = clone.querySelector(".block-copy");
+    if (inner && inner.parentNode) inner.parentNode.removeChild(inner);
+    var text = clone.textContent.replace(/\u00a0/g, " ").replace(/\s+$/, "");
+    if (!text) return;
+    copyWithFeedback(btn, text);
   });
 
   /* ---------- pending-send queue rows (session/queue snapshot) ---------- */
@@ -1870,7 +1908,7 @@
         b.onclick = fn;
         return b;
       };
-      row.appendChild(qbtn("copy", "复制", function () { post({ type: "copyText", text: it.text }); }));
+      row.appendChild(qbtn("copy", "复制", function () { copyWithFeedback(this, it.text); }));
       if (it.placement === "queued") {
         row.appendChild(qbtn("steer", "在下一个 LLM 回复后插入（打断）", function () { post({ type: "queueSteer", itemId: it.id }); }));
         row.appendChild(qbtn("del", "撤回（从队列移除）", function () { post({ type: "queueRemove", itemId: it.id }); }, true));
@@ -1913,6 +1951,31 @@
     var msg = event.data;
     if (!msg || typeof msg !== "object") return;
     switch (msg.type) {
+      case "sessionMetrics": {
+        // Live composer metrics for the active session. Update the row AND the
+        // cached `state.usage` the status line reads, so the line never depends
+        // on a session-list refresh to appear.
+        var mrow = null;
+        for (var mi = 0; mi < state.sessions.length; mi++) {
+          if (state.sessions[mi].sessionId === msg.sessionId) { mrow = state.sessions[mi]; break; }
+        }
+        if (mrow) {
+          if (msg.usage !== undefined) mrow.usage = msg.usage;
+          if (msg.stats !== undefined) mrow.stats = msg.stats;
+          if (msg.context !== undefined) mrow.context = msg.context;
+        }
+        if (msg.sessionId === state.activeSessionId) {
+          if (msg.usage !== undefined) state.usage = msg.usage;
+          updateStatusLine();
+        }
+        return;
+      }
+      case "copyResult": {
+        var waiter = copyWaiters && copyWaiters[msg.requestId];
+        if (copyWaiters) delete copyWaiters[msg.requestId];
+        if (waiter) waiter(msg.ok === true, msg.error);
+        return;
+      }
       case "state": {
         var wasConnected = state.connected;
         state.connected = msg.connected;
@@ -1981,6 +2044,21 @@
           }
         }
         scheduleRender();
+        break;
+      }
+      case "imageData": {
+        var target = localImgWaiters[msg.requestId];
+        delete localImgWaiters[msg.requestId];
+        if (!target) break;
+        if (msg.data) {
+          target.setAttribute("src", "data:" + (msg.mediaType || "image/png") + ";base64," + msg.data);
+          target.removeAttribute("data-local-src");
+        } else {
+          var fallback = document.createElement("span");
+          fallback.className = "md-img-link";
+          fallback.textContent = "[图片读取失败] " + (msg.error || "");
+          if (target.parentNode) target.parentNode.replaceChild(fallback, target);
+        }
         break;
       }
       case "models": {
@@ -3024,11 +3102,16 @@
     }
     var u = state.usage;
     if (u) {
-      var billed = (u.uncachedInputTokens || 0) + (u.cacheReadTokens || 0) + (u.cacheWriteTokens || 0);
-      if (billed > 0 && typeof u.cacheReadTokens === "number") {
-        groups.push("缓存命中 " + Math.round((u.cacheReadTokens / billed) * 100) + "%");
+      // 0.2.1 nests the durable counters under `totals` and keeps the current
+      // turn's own counters under `last`; 0.1.x served them flat. Reading the
+      // flat fields of a 0.2.1 unit yielded undefined, which silently dropped
+      // the "输入/输出 tok" group (and the cache-hit rate with it).
+      var t = u.totals || u;
+      var billed = (t.uncachedInputTokens || 0) + (t.cacheReadTokens || 0) + (t.cacheWriteTokens || 0);
+      if (billed > 0 && typeof t.cacheReadTokens === "number") {
+        groups.push("缓存命中 " + Math.round((t.cacheReadTokens / billed) * 100) + "%");
       }
-      groups.push("输入 " + fmtTok(billed) + " tok · 输出 " + fmtTok(u.outputTokens || 0) + " tok");
+      groups.push("输入 " + fmtTok(billed) + " tok · 输出 " + fmtTok(t.outputTokens || 0) + " tok");
     }
     var line = groups.join(" | ");
     var liveHtml = "";
@@ -3250,6 +3333,94 @@
     lightboxEl.hidden = true;
     lightboxEl.querySelector(".lb-img").src = "";
   }
+
+  /* ---------- copy: the extension host owns the clipboard ----------
+     The webview's clipboard write is unobservable and can be dropped silently,
+     so nothing here touches a clipboard API. The text is posted to the host,
+     which writes it with `vscode.env.clipboard`, reads it back, and answers
+     `copyResult` — callers claim success only once that lands.
+
+     Both trigger paths are wired, because they fail independently:
+       · keydown Ctrl/Cmd+C — the transcript path. Works even when the webview
+         never dispatches a `copy` event.
+       · `copy` — the context menu / app menu path the keydown misses. Its
+         default is only cancelled when it is the thing that breaks: a
+         selection holding an inlined image serialises to a multi-MB data: URL.
+     The two overlap on a plain Ctrl+C, so identical selections are deduped. */
+  var copySeq = 0;
+  var copyWaiters = {};
+  var lastCopyText = "";
+  var lastCopyAt = 0;
+  function localError(text) {
+    state.items.push({ kind: "error", text: text });
+    scheduleRender();
+  }
+  function requestCopy(text, done) {
+    if (!text) return;
+    copySeq += 1;
+    var id = String(copySeq);
+    if (done) {
+      copyWaiters[id] = done;
+      setTimeout(function () { delete copyWaiters[id]; }, 5000);
+    }
+    try {
+      // Straight to the API, not through post(): post() swallows a throw, and
+      // a swallowed copy is the exact failure this whole block exists to
+      // eliminate.
+      vscode.postMessage({ type: "copyText", text: text, requestId: id });
+    } catch (err) {
+      delete copyWaiters[id];
+      var reason = "复制失败：面板发不出消息（" + String((err && err.message) || err) + "）";
+      localError(reason);
+      if (done) done(false, reason);
+    }
+  }
+  function copyWithFeedback(btn, text) {
+    if (!text) return;
+    var label = btn.textContent;
+    btn.textContent = "复制中…";
+    requestCopy(text, function (ok) {
+      // The host already posted the reason on failure; the label only reports
+      // that this particular copy did not land.
+      btn.textContent = ok ? "✓ 已复制" : "✗ 复制失败";
+      setTimeout(function () { btn.textContent = label; }, 1600);
+    });
+  }
+  function copySelection() {
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return "";
+    var plain = sel.toString();
+    if (!plain) return "";
+    var now = Date.now();
+    if (plain !== lastCopyText || now - lastCopyAt > 600) {
+      lastCopyText = plain;
+      lastCopyAt = now;
+      requestCopy(plain);
+    }
+    return plain;
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey) return;
+    if (String(ev.key).toLowerCase() !== "c") return;
+    var target = ev.target;
+    // Inside the composer the browser's own textarea copy is correct and
+    // `window.getSelection()` is empty anyway.
+    if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT")) return;
+    copySelection();
+  });
+  document.addEventListener("copy", function (ev) {
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    if (!sel.toString()) return;
+    try {
+      var holder = document.createElement("div");
+      holder.appendChild(sel.getRangeAt(0).cloneContents());
+      if (holder.querySelector("img[src^='data:']")) ev.preventDefault();
+    } catch (err) {
+      /* leave the default alone */
+    }
+    copySelection();
+  });
   inputEl.addEventListener("paste", function (e) {
     var items = e.clipboardData && e.clipboardData.items;
     if (!items) return;

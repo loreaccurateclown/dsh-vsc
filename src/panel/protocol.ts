@@ -100,6 +100,29 @@ export type HostMessage =
     }
   | { type: "error"; message: string }
   | {
+      /**
+       * Live metrics for the active session, pushed the moment the matching
+       * projection frames land. The status line used to depend on a full
+       * session-list refresh, so it went blank between refreshes.
+       */
+      type: "sessionMetrics";
+      sessionId: string;
+      usage?: PanelSession["usage"];
+      stats?: PanelSession["stats"];
+      context?: PanelSession["context"];
+    }
+  | {
+      /**
+       * The outcome of a `copyText` write done by the extension host. The
+       * panel's own clipboard write is unobservable, so every copy is confirmed
+       * here instead of assumed.
+       */
+      type: "copyResult";
+      requestId: string;
+      ok: boolean;
+      error?: string;
+    }
+  | {
       /** One resolved transcript image (session.attachment round-trip). */
       type: "attachment";
       requestId: number;
@@ -111,6 +134,15 @@ export type HostMessage =
       height?: number;
       bytes?: number;
       name?: string;
+      error?: string;
+    }
+  | {
+      /** One local image the assistant linked by path, as a data: URL. */
+      type: "imageData";
+      requestId: number;
+      mediaType?: string;
+      /** base64 payload; absent when `error` is set. */
+      data?: string;
       error?: string;
     };
 
@@ -128,7 +160,7 @@ export type WebviewMessage =
   | { type: "refreshFiles" }
   | { type: "getModels" }
   | { type: "selectModel"; provider: string; model: string; reasoningEffort?: string }
-  | { type: "copyText"; text: string }
+  | { type: "copyText"; text: string; requestId?: string }
   | { type: "openFile"; path: string }
   | { type: "queueSteer"; itemId: string }
   | { type: "queueRemove"; itemId: string }
@@ -157,6 +189,13 @@ export type WebviewMessage =
       sessionId: string;
       attachmentId: string;
     }
+  | {
+      /** Lazy read of one local image the assistant referenced by path
+       *  (`![alt](D:\out\shot.png)`) — paths never load inside the webview. */
+      type: "readImage";
+      requestId: number;
+      path: string;
+    }
   | { type: "openSettings" };
 
 export interface PanelSession {
@@ -173,6 +212,16 @@ export interface PanelSession {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
     outputTokens?: number;
+    /**
+     * DSH 0.2.1 nests the durable counters here and keeps the current turn's
+     * counters under `last`; 0.1.x served them flat on the projection itself.
+     */
+    totals?: {
+      uncachedInputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      outputTokens?: number;
+    };
   };
   /** sessionStats projection — the web composer's status line source. */
   stats?: {

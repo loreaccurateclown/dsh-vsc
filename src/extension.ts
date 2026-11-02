@@ -23,7 +23,7 @@ import { reviewFiles } from "./editor/diff";
 import type { PanelEvent } from "./panel/protocol";
 
 const POLL_MS = 1000;
-const START_TIMEOUT_MS = 30000;
+const START_TIMEOUT_MS = 90000;
 const RIGHT_VIEW = "dsh.sidebar.right";
 const MAX_SPAWN_FAILURES = 3; // consecutive auto-spawn failures before giving up this session
 const OFFLINE_RECHECK_MS = 15000; // slow poll while down-but-not-our-job (user may start one manually)
@@ -125,10 +125,30 @@ export function activate(context: vscode.ExtensionContext): void {
     }, 4000);
   }
 
+  /** Whether this window holds any credential for the configured harness. */
+  function hasCredential(): boolean {
+    if (readLaunchToken()) return true;
+    const configured = vscode.workspace.getConfiguration("dshVsc").get<string>("token");
+    return Boolean(configured?.trim());
+  }
+
   async function ensureRunning(): Promise<boolean> {
     if (connecting) return false;
     // Idempotent start: if something already answers, just (re)connect.
-    const before = await discover();
+    let before = await discover();
+    // A harness we spawned survives a VS Code restart, but its launch token
+    // does not: 0.2.1 mints one per process and the extension keeps it in
+    // memory only. The orphan answers every probe with 401, so `alive` alone
+    // would make us attach tokenless and wait forever. We own it (pid record),
+    // so recycle it instead of stranding the panel.
+    if (before.alive && harnessRunning() && !hasCredential()) {
+      log.appendLine(
+        "harness 还活着，但它的 token 随着上次窗口一起没了（0.2.1 token 只存在内存里）——重启我们自己启动的那个实例"
+      );
+      await stopHarness();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      before = await discover();
+    }
     if (before.alive) {
       await refresh();
       return true;
@@ -160,8 +180,13 @@ export function activate(context: vscode.ExtensionContext): void {
       autoRetryDisabled = true;
       status.setOffline();
       log.appendLine(
-        `DSH 服务连续 ${MAX_SPAWN_FAILURES} 次启动失败，本次会话不再自动重试（可执行命令 dsh: Start Web Harness 手动重试）`
+        `DSH 服务连续 ${MAX_SPAWN_FAILURES} 次没在 ${START_TIMEOUT_MS / 1000}s 内就绪，停止自动重启；改为每 ${OFFLINE_RECHECK_MS / 1000}s 只看一眼，一旦它起来了自动接上（也可执行 dsh: Start Web Harness 手动重试）`
       );
+      // Measured on a cold Windows boot (2026-10-25 09:43): the harness printed
+      // its URL AFTER this timeout expired. Stopping the timer here left a live
+      // but late harness completely unobserved and the panel stuck offline for
+      // the rest of the session. Keep watching without spawning.
+      scheduleHarnessCheck(OFFLINE_RECHECK_MS);
     } else {
       scheduleHarnessCheck(Math.min(2000 * 2 ** (consecutiveSpawnFailures - 1), 30000));
     }
@@ -302,9 +327,16 @@ export function activate(context: vscode.ExtensionContext): void {
     stream.onHostEvent = (event) => {
       if (event.startsWith("api-session/") || event === "workspace/changed") void panel.refresh();
     };
-    stream.onWorkspaces = (items) => {
-      const archived = (items as unknown as { archivedSessionIds?: string[] }).archivedSessionIds;
-      panel.setArchivedSessionIds(Array.isArray(archived) ? archived : undefined);
+    stream.onWorkspaces = (baseline) => {
+      const archived = baseline.archivedSessionIds;
+      panel.setArchivedSessionIds(Array.isArray(archived) ? [...archived] : undefined);
+      void panel.refresh();
+    };
+    // 0.2.1 republishes the archive set on its own frame after an
+    // archive/unarchive; without this the just-archived row came straight back
+    // on the refresh below.
+    stream.onArchived = (archived) => {
+      panel.setArchivedSessionIds([...archived]);
       void panel.refresh();
     };
     stream.onError = (message) => log.appendLine(`event stream: ${message}`);
