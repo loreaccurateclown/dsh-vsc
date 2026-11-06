@@ -330,6 +330,8 @@ export function activate(context: vscode.ExtensionContext): void {
     stream.onWorkspaces = (baseline) => {
       const archived = baseline.archivedSessionIds;
       panel.setArchivedSessionIds(Array.isArray(archived) ? [...archived] : undefined);
+      // Same frame carries the workspace rows the picker groups by.
+      panel.setWorkspaces(baseline.items);
       void panel.refresh();
     };
     // 0.2.1 republishes the archive set on its own frame after an

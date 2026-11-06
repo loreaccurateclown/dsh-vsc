@@ -491,7 +491,7 @@
 
   var state = {
     connected: false, version: null, phase: "searching",
-    sessions: [], activeSessionId: null,
+    sessions: [], workspaces: [], activeSessionId: null,
     items: [], seqs: new Set(), oldestSeq: Infinity,
     running: false, lastTurn: -1,
     dirtySync: false,       // one unfrozen render right after turn/end
@@ -1993,6 +1993,7 @@
         state.version = msg.version;
         state.phase = msg.phase || (msg.connected ? "online" : "offline");
         state.sessions = msg.sessions || [];
+    state.workspaces = msg.workspaces || [];
         state.activeSessionId = msg.activeSessionId;
         // Transient errors (e.g. "harness 未连接" fired while booting) should
         // vanish once connectivity comes back.
@@ -2511,6 +2512,13 @@
     return rows.slice(0, 30);
   }
 
+  /** Picker label for a workspace row: its title, else the folder's leaf name. */
+  function workspaceLabel(ws) {
+    if (ws && ws.title) return String(ws.title);
+    if (ws && ws.path) return folderLeaf(ws.path);
+    return "Workspace";
+  }
+
   /** Last path segment of a workspace folder, tolerant of both separators. */
   function folderLeaf(dir) {
     var parts = String(dir).replace(/\\/g, "/").replace(/\/+$/, "").split("/");
@@ -2539,52 +2547,67 @@
       pillEl.title = "DSH Bridge: 正在加载…";
     }
     selEl.innerHTML = "";
-    // Group sessions by workspace folder, the way the official web GUI groups
-    // its sidebar. Both the groups and the rows inside them keep the incoming
-    // order (most recently updated first); sessions without a `cwd` stay as
-    // plain options so nothing upstream relied on is lost.
-    var folderGroups = [];
-    var folderIndex = {};
+    // Group by workspace, like the official web GUI: the workspace rows arrive
+    // in host order, sessions keep their recency order inside a group, and a
+    // session that belongs to no workspace lands in "Ungrouped". Before the
+    // workspace baseline has arrived the list stays flat rather than
+    // mislabelled.
+    var wsById = {};
+    var wsOrder = [];
+    (state.workspaces || []).forEach(function (ws) {
+      if (!ws || !ws.workspaceId) return;
+      wsById[ws.workspaceId] = ws;
+      wsOrder.push(ws.workspaceId);
+    });
+    var byWorkspace = {};
+    var ungrouped = [];
     state.sessions.forEach(function (sess) {
-      var key = sess.cwd ? String(sess.cwd) : "";
-      var group = folderIndex[key];
-      if (!group) {
-        group = { key: key, sessions: [] };
-        folderIndex[key] = group;
-        folderGroups.push(group);
+      if (sess.workspaceId && wsById[sess.workspaceId]) {
+        if (!byWorkspace[sess.workspaceId]) byWorkspace[sess.workspaceId] = [];
+        byWorkspace[sess.workspaceId].push(sess);
+      } else {
+        ungrouped.push(sess);
       }
-      group.sessions.push(sess);
     });
-    var leafCount = {};
-    folderGroups.forEach(function (group) {
-      if (!group.key) return;
-      var leaf = folderLeaf(group.key);
-      leafCount[leaf] = (leafCount[leaf] || 0) + 1;
+    var titleCount = {};
+    wsOrder.forEach(function (id) {
+      var title = workspaceLabel(wsById[id]);
+      titleCount[title] = (titleCount[title] || 0) + 1;
     });
-    folderGroups.forEach(function (group) {
-      var parent = selEl;
-      if (group.key) {
+    function appendSessionOption(container, sess) {
+      var opt = document.createElement("option");
+      opt.value = sess.sessionId;
+      var title = state.titles[sess.sessionId] || sess.title || "";
+      var label = title ? title : ("会话 " + shortId(sess.sessionId));
+      var time = relTime(sess.updatedAt);
+      opt.textContent = time ? (label + " · " + time) : label;
+      if (sess.running) opt.textContent += " ●";
+      if (sess.sessionId === state.activeSessionId) opt.selected = true;
+      container.appendChild(opt);
+    }
+    if (wsOrder.length === 0) {
+      ungrouped.forEach(function (sess) { appendSessionOption(selEl, sess); });
+    } else {
+      wsOrder.forEach(function (id) {
+        var list = byWorkspace[id];
+        if (!list || list.length === 0) return;
+        var ws = wsById[id];
         var og = document.createElement("optgroup");
-        var leaf = folderLeaf(group.key);
-        // Two folders sharing a leaf name would look identical in a native
-        // picker, so qualify the label with the parent segment.
-        og.label = leafCount[leaf] > 1 ? leaf + " — " + folderParent(group.key) : leaf;
-        og.title = group.key;
+        var title = workspaceLabel(ws);
+        // Two workspaces sharing a title would look identical in a native
+        // picker, so qualify the label with the parent folder.
+        og.label = titleCount[title] > 1 ? title + " — " + folderParent(ws.path) : title;
+        og.title = ws.path || title;
         selEl.appendChild(og);
-        parent = og;
-      }
-      group.sessions.forEach(function (sess) {
-        var opt = document.createElement("option");
-        opt.value = sess.sessionId;
-        var title = state.titles[sess.sessionId] || sess.title || "";
-        var label = title ? title : ("会话 " + shortId(sess.sessionId));
-        var time = relTime(sess.updatedAt);
-        opt.textContent = time ? (label + " · " + time) : label;
-        if (sess.running) opt.textContent += " ●";
-        if (sess.sessionId === state.activeSessionId) opt.selected = true;
-        parent.appendChild(opt);
+        list.forEach(function (sess) { appendSessionOption(og, sess); });
       });
-    });
+      if (ungrouped.length > 0) {
+        var ogUngrouped = document.createElement("optgroup");
+        ogUngrouped.label = "Ungrouped";
+        selEl.appendChild(ogUngrouped);
+        ungrouped.forEach(function (sess) { appendSessionOption(ogUngrouped, sess); });
+      }
+    }
     cancelBtn.hidden = !state.running;
     // Composer takeover: while an interaction is pending the main input row is
     // hidden entirely (regardless of connectivity changes).

@@ -64,14 +64,21 @@ scheme `c` and the shell failed with `0x2` ("cannot find the file"). Local
 targets (drive letter, UNC, `file:`) now open in the editor with an existence
 check; only real URLs reach the external handler.
 
-**Session picker grouped by folder.** The harness's `session/list` rows carry
-`cwd`; upstream dropped it when mapping to the panel. It is carried through
-again, and the top dropdown renders one `<optgroup>` per workspace folder:
-- groups and rows keep the incoming order (most recently updated first);
-- the label is the folder's leaf name, qualified with the parent segment when
-  two folders share a leaf name (the full path is the group's tooltip);
-- sessions without a `cwd` remain plain options, so nothing upstream relied on
-  is lost.
+**Session picker grouped by workspace.** The web GUI groups sessions by
+**workspace**, and treats anything outside every workspace as **Ungrouped** —
+grouping by `cwd` gets this wrong, because every session has a `cwd`. The
+`workspace/follow` baseline already carries `WorkspaceView[]` with `sessionIds`;
+the bridge ignored it. It is consumed again (`setWorkspaces`), each session is
+resolved to its workspace through those `sessionIds`, and the top dropdown
+renders one `<optgroup>` per workspace:
+- groups follow the host's workspace order; rows keep their recency order
+  (most recently updated first);
+- the label is the workspace title (falling back to the folder's leaf name),
+  qualified with the parent folder when two workspaces share a title; the full
+  path is the group's tooltip;
+- sessions in no workspace go under **Ungrouped**, exactly like the web GUI;
+- before the workspace baseline arrives the list stays flat instead of
+  mislabelling every session as ungrouped.
 
 **External-window token export.** `captureLaunchToken()` now also writes
 `%TEMP%\dsh-vsc-token.json` (`{url, token, ts}`). A second client of the same
