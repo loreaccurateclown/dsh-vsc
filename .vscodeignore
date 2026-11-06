@@ -10,3 +10,4 @@ tsconfig.json
 internal/**
 docs/**
 .gitignore
+i18n/**
