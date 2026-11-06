@@ -71,8 +71,11 @@ grouping by `cwd` gets this wrong, because every session has a `cwd`. The
 the bridge ignored it. It is consumed again (`setWorkspaces`), each session is
 resolved to its workspace through those `sessionIds`, and the top dropdown
 renders one `<optgroup>` per workspace:
-- groups follow the host's workspace order; rows keep their recency order
-  (most recently updated first);
+- groups are ordered by **folder path**, not host order, so a subfolder
+  workspace sits next to its parent (`Programming` → `…\StrategyGamev1`); a
+  workspace is indented by the number of workspaces that are its ancestors
+  (capped at three levels, which is as much as a native `<optgroup>` reads
+  well). Rows keep their recency order inside a group;
 - the label is the workspace title (falling back to the folder's leaf name),
   qualified with the parent folder when two workspaces share a title; the full
   path is the group's tooltip;

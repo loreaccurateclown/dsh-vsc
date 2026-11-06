@@ -2519,6 +2519,11 @@
     return "Workspace";
   }
 
+  /** Compare-friendly folder path: one separator, no trailing slash, lower-case. */
+  function normFolderPath(dir) {
+    return String(dir || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  }
+
   /** Last path segment of a workspace folder, tolerant of both separators. */
   function folderLeaf(dir) {
     var parts = String(dir).replace(/\\/g, "/").replace(/\/+$/, "").split("/");
@@ -2559,6 +2564,31 @@
       wsById[ws.workspaceId] = ws;
       wsOrder.push(ws.workspaceId);
     });
+    // Order groups by folder path rather than host order, so a subfolder
+    // workspace sits next to its parent (Programming → …\StrategyGamev1);
+    // a child is indented by the number of workspaces that are its ancestors.
+    var wsPath = {};
+    wsOrder.forEach(function (id) {
+      wsPath[id] = normFolderPath(wsById[id].path);
+    });
+    wsOrder.sort(function (a, b) {
+      if (wsPath[a] === wsPath[b]) return 0;
+      return wsPath[a] < wsPath[b] ? -1 : 1;
+    });
+    var wsDepth = {};
+    wsOrder.forEach(function (id) {
+      var depth = 0;
+      if (wsPath[id]) {
+        wsOrder.forEach(function (other) {
+          if (other === id) return;
+          var parent = wsPath[other];
+          if (parent && wsPath[id].indexOf(parent + "/") === 0) depth++;
+        });
+      }
+      // A native optgroup has no real nesting; a couple of levels of indent is
+      // all that reads well, and deeper trees are rare.
+      wsDepth[id] = Math.min(depth, 3);
+    });
     var byWorkspace = {};
     var ungrouped = [];
     state.sessions.forEach(function (sess) {
@@ -2596,7 +2626,7 @@
         var title = workspaceLabel(ws);
         // Two workspaces sharing a title would look identical in a native
         // picker, so qualify the label with the parent folder.
-        og.label = titleCount[title] > 1 ? title + " — " + folderParent(ws.path) : title;
+        og.label = new Array(wsDepth[id] + 1).join("  ") + (titleCount[title] > 1 ? title + " — " + folderParent(ws.path) : title);
         og.title = ws.path || title;
         selEl.appendChild(og);
         list.forEach(function (sess) { appendSessionOption(og, sess); });
