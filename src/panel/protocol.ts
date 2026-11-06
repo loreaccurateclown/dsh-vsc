@@ -144,6 +144,20 @@ export type HostMessage =
       /** base64 payload; absent when `error` is set. */
       data?: string;
       error?: string;
+    }
+  | {
+      /**
+       * A clipboard image read on the panel's behalf. A webview paste event
+       * normally carries no OS image item (`clipboardData.items` holds text
+       * only), so the panel asks the host for the bytes; the host uses the
+       * platform's clipboard tooling (`src/panel/clipboard.ts`).
+       */
+      type: "clipboardImage";
+      requestId: number;
+      mediaType?: string;
+      /** base64 payload; absent when `error` is set. */
+      data?: string;
+      error?: string;
     };
 
 /** Webview → host messages. */
@@ -161,6 +175,7 @@ export type WebviewMessage =
   | { type: "getModels" }
   | { type: "selectModel"; provider: string; model: string; reasoningEffort?: string }
   | { type: "copyText"; text: string; requestId?: string }
+  | { type: "readClipboardImage"; requestId: number }
   | { type: "openFile"; path: string }
   | { type: "queueSteer"; itemId: string }
   | { type: "queueRemove"; itemId: string }

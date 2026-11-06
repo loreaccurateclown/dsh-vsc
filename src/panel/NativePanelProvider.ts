@@ -7,6 +7,7 @@ import type { AnswerableEvent, HarnessEventStream } from "../events/eventStream"
 import type { HostMessage, PanelEvent, PanelSession, TodoItem, ToolLineDiff, WebviewMessage } from "./protocol";
 import { countMetaDiff, countToolArgsDiff } from "../editor/diffCount";
 import { INTENT_CHOICES, sendAsk } from "../editor/askSelection";
+import { readClipboardImage } from "./clipboard";
 
 /**
  * Display copy for the four shipped agent presets — the official zh text from
@@ -505,6 +506,23 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     switch (message.type) {
+      case "readClipboardImage": {
+        // A webview paste event carries text but not OS image bytes; read the
+        // platform clipboard here and hand the panel a base64 PNG. Failures are
+        // reported, not thrown — drag & drop keeps working regardless.
+        const clipboard = await readClipboardImage();
+        if (clipboard.ok) {
+          this.post({
+            type: "clipboardImage",
+            requestId: message.requestId,
+            mediaType: clipboard.mediaType,
+            data: clipboard.data,
+          });
+        } else {
+          this.post({ type: "clipboardImage", requestId: message.requestId, error: clipboard.error });
+        }
+        break;
+      }
       case "ready":
         this.postState();
         if (this.activeSessionId) {
