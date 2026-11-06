@@ -37,6 +37,12 @@ export type HostMessage =
       version?: string;
       phase?: "searching" | "starting" | "online" | "offline";
       sessions: PanelSession[];
+      /**
+       * Workspace rows from `workspace/follow`, in host order. The picker uses
+       * this to group sessions exactly like the official web GUI, including
+       * sessions that belong to no workspace ("Ungrouped").
+       */
+      workspaces?: { workspaceId: string; title: string; path: string }[];
       activeSessionId: string | null;
     }
   | { type: "event"; sessionId: string; event: PanelEvent }
@@ -228,6 +234,8 @@ export interface PanelSession {
    * from `SessionSummary`; the picker uses it to group sessions by folder.
    */
   cwd?: string;
+  /** Workspace the session belongs to (absent = the web GUI's "Ungrouped"). */
+  workspaceId?: string;
   /** Current agent preset of the session (agentPreset.list/select domain). */
   agentPreset?: string;
   /** tokenUsage projection (aggregate over the durable log). */

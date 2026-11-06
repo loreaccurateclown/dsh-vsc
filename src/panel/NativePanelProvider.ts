@@ -5,6 +5,7 @@ import { HarnessClient, RpcErrorResult } from "../harness/client";
 import type { PromptContentPart, QueueAction } from "../harness/protocol";
 import type { AnswerableEvent, HarnessEventStream } from "../events/eventStream";
 import type { HostMessage, PanelEvent, PanelSession, TodoItem, ToolLineDiff, WebviewMessage } from "./protocol";
+import type { WorkspaceView } from "../harness/protocol";
 import { countMetaDiff, countToolArgsDiff } from "../editor/diffCount";
 import { INTENT_CHOICES, sendAsk } from "../editor/askSelection";
 import { readClipboardImage } from "./clipboard";
@@ -130,6 +131,8 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   private readonly projectionCache = new Map<string, Map<string, unknown>>();
   /** Archived session ids — 0.2.1 keeps them on the workspace follow baseline, not on session rows. */
   private archivedSessionIds = new Set<string>();
+  /** Workspace rows from the follow baseline: the picker's grouping source. */
+  private workspaces: WorkspaceView[] = [];
   private sessions: PanelSession[] = [];
   private titles = new Map<string, string>();
   private connected = false;
@@ -286,6 +289,15 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Workspace rows from the same baseline. The session rows carry no
+   * `workspaceId`, so membership is resolved through each workspace's
+   * `sessionIds` — exactly the relation the web GUI groups by.
+   */
+  setWorkspaces(items: WorkspaceView[]): void {
+    this.workspaces = Array.isArray(items) ? items : [];
+  }
+
+  /**
    * `$events/result` needs the forwarded-event client id handed out by the live
    * `$events` stream; without it an answer cannot be correlated.
    */
@@ -407,6 +419,13 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       // projection HINTS — title/usage/stats come from session/control and are
       // served from the projection cache here.
       const archived = this.archivedSessionIds;
+      // sessionId → workspace, from the workspace follow baseline. A session
+      // listed by no workspace is the web GUI's "Ungrouped": it renders under
+      // its own heading rather than being guessed from `cwd`.
+      const workspaceBySession = new Map<string, WorkspaceView>();
+      for (const workspace of this.workspaces) {
+        for (const sessionId of workspace.sessionIds ?? []) workspaceBySession.set(sessionId, workspace);
+      }
       let sessions = items
         .filter((item) => !item.blank && item.origin !== "subagent" && !archived.has(item.sessionId))
         .map((item) => {
@@ -429,6 +448,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             title: this.projectionValue<string>(item.sessionId, "title") ?? undefined,
             // Grouping key for the picker. The upstream bridge discarded it.
             cwd: item.cwd,
+            workspaceId: workspaceBySession.get(item.sessionId)?.workspaceId,
             usage: this.projectionValue<PanelSession["usage"]>(item.sessionId, "tokenUsage"),
             stats: this.projectionValue<PanelSession["stats"]>(item.sessionId, "sessionStats"),
             context: this.projectionValue<PanelSession["context"]>(item.sessionId, "contextPressure"),
@@ -447,6 +467,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           title: "新会话",
           // Created from this window, so it belongs to the open folder.
           cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          workspaceId: this.workspaceIdForFolder(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
           usage: undefined,
           stats: undefined,
           context: undefined,
@@ -485,6 +506,14 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
    * (registering the path idempotently). No folder open → undefined, and new
    * sessions then fall back to the host's default workspace.
    */
+  /** Workspace row whose folder is exactly `folder` (path compare, case-insensitive). */
+  private workspaceIdForFolder(folder: string | undefined): string | undefined {
+    if (!folder) return undefined;
+    const normalise = (value: string): string => value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const target = normalise(folder);
+    return this.workspaces.find((workspace) => normalise(workspace.path) === target)?.workspaceId;
+  }
+
   private async resolveWorkspaceId(): Promise<string | undefined> {
     try {
       if (!this.client) return undefined;
@@ -1289,6 +1318,9 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       phase: this.phase,
       // live title event wins; otherwise the projection title from session.list
       sessions: this.sessions.map((s) => ({ ...s, title: this.titles.get(s.sessionId) ?? s.title })),
+      // Workspace rows in host order: the picker groups by these, and a session
+      // outside every `sessionIds` list is "Ungrouped".
+      workspaces: this.workspaces.map((w) => ({ workspaceId: w.workspaceId, title: w.title, path: w.path })),
       activeSessionId: this.activeSessionId,
     });
   }
