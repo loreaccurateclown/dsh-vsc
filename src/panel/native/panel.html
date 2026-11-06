@@ -1857,11 +1857,22 @@
   });
 
   /* ---------- markdown links: open externally (never navigate the webview) ---------- */
+  function isLocalTarget(href) {
+    return /^file:/i.test(href) || /^[A-Za-z]:[\\/]/.test(href) || /^\\\\/.test(href);
+  }
   messagesEl.addEventListener("click", function (ev) {
     var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
     if (!a) return;
     ev.preventDefault();
-    post({ type: "openExternal", url: a.getAttribute("href") });
+    var href = a.getAttribute("href") || "";
+    // A Windows path has no URL scheme, so Uri.parse("C:\…") reads "c" as one
+    // and the shell launch fails with "cannot find the file" (0x2). Local
+    // targets go to the editor; only real URLs reach the external handler.
+    if (isLocalTarget(href)) {
+      post({ type: "openFile", path: href });
+      return;
+    }
+    post({ type: "openExternal", url: href });
   });
 
   /* ---------- block-level copy: one delegated listener for every
@@ -2062,6 +2073,13 @@
       case "imageData": {
         var target = localImgWaiters[msg.requestId];
         delete localImgWaiters[msg.requestId];
+        // A drag & drop attach has no <img> waiting for the bytes: it goes
+        // straight into the composer's attachment rail.
+        if (msg.attach) {
+          if (msg.data) pushAttachment(msg.mediaType, msg.data, "");
+          else statusEl.textContent = "Attach failed: " + (msg.error || "could not read the image");
+          break;
+        }
         if (!target) break;
         if (msg.data) {
           target.setAttribute("src", "data:" + (msg.mediaType || "image/png") + ";base64," + msg.data);
@@ -2493,6 +2511,18 @@
     return rows.slice(0, 30);
   }
 
+  /** Last path segment of a workspace folder, tolerant of both separators. */
+  function folderLeaf(dir) {
+    var parts = String(dir).replace(/\\/g, "/").replace(/\/+$/, "").split("/");
+    return parts[parts.length - 1] || String(dir);
+  }
+
+  /** Parent segment, used only to disambiguate identical leaf names. */
+  function folderParent(dir) {
+    var parts = String(dir).replace(/\\/g, "/").replace(/\/+$/, "").split("/");
+    return parts.length > 1 ? parts[parts.length - 2] : String(dir);
+  }
+
   function updateHeader() {
     var s = state.sessions.find(function (x) { return x.sessionId === state.activeSessionId; });
     if (state.connected) {
@@ -2509,16 +2539,51 @@
       pillEl.title = "DSH Bridge: 正在加载…";
     }
     selEl.innerHTML = "";
+    // Group sessions by workspace folder, the way the official web GUI groups
+    // its sidebar. Both the groups and the rows inside them keep the incoming
+    // order (most recently updated first); sessions without a `cwd` stay as
+    // plain options so nothing upstream relied on is lost.
+    var folderGroups = [];
+    var folderIndex = {};
     state.sessions.forEach(function (sess) {
-      var opt = document.createElement("option");
-      opt.value = sess.sessionId;
-      var title = state.titles[sess.sessionId] || sess.title || "";
-      var label = title ? title : ("会话 " + shortId(sess.sessionId));
-      var time = relTime(sess.updatedAt);
-      opt.textContent = time ? (label + " · " + time) : label;
-      if (sess.running) opt.textContent += " ●";
-      if (sess.sessionId === state.activeSessionId) opt.selected = true;
-      selEl.appendChild(opt);
+      var key = sess.cwd ? String(sess.cwd) : "";
+      var group = folderIndex[key];
+      if (!group) {
+        group = { key: key, sessions: [] };
+        folderIndex[key] = group;
+        folderGroups.push(group);
+      }
+      group.sessions.push(sess);
+    });
+    var leafCount = {};
+    folderGroups.forEach(function (group) {
+      if (!group.key) return;
+      var leaf = folderLeaf(group.key);
+      leafCount[leaf] = (leafCount[leaf] || 0) + 1;
+    });
+    folderGroups.forEach(function (group) {
+      var parent = selEl;
+      if (group.key) {
+        var og = document.createElement("optgroup");
+        var leaf = folderLeaf(group.key);
+        // Two folders sharing a leaf name would look identical in a native
+        // picker, so qualify the label with the parent segment.
+        og.label = leafCount[leaf] > 1 ? leaf + " — " + folderParent(group.key) : leaf;
+        og.title = group.key;
+        selEl.appendChild(og);
+        parent = og;
+      }
+      group.sessions.forEach(function (sess) {
+        var opt = document.createElement("option");
+        opt.value = sess.sessionId;
+        var title = state.titles[sess.sessionId] || sess.title || "";
+        var label = title ? title : ("会话 " + shortId(sess.sessionId));
+        var time = relTime(sess.updatedAt);
+        opt.textContent = time ? (label + " · " + time) : label;
+        if (sess.running) opt.textContent += " ●";
+        if (sess.sessionId === state.activeSessionId) opt.selected = true;
+        parent.appendChild(opt);
+      });
     });
     cancelBtn.hidden = !state.running;
     // Composer takeover: while an interaction is pending the main input row is
@@ -3494,7 +3559,12 @@
     setTimeout(function () { delete clipboardRequests[id]; }, 10000);
   }
 
-  /* ---------- drag & drop images (the webview receives real files) ---------- */
+  /* ---------- drag & drop images ----------
+     VS Code webviews do not always expose `dataTransfer.files` for a drop from
+     Explorer; the same drop can arrive as a VS Code uri-list. Accept both, and
+     listen in the capture phase so the host's "open the dropped file" default
+     never wins. Files that arrive as bytes are read in-page; paths are read by
+     the extension host (`readImage` with `attach`). */
 
   function attachFiles(files) {
     if (!files) return;
@@ -3513,28 +3583,58 @@
     }
   }
 
+  function isImagePath(p) {
+    return /\.(png|jpe?g|webp|gif)$/i.test(p);
+  }
+
+  function attachPaths(paths) {
+    for (var pi = 0; pi < paths.length; pi++) {
+      var raw = String(paths[pi] || "").trim();
+      if (!raw || !isImagePath(raw)) continue;
+      var id = ++clipboardRequestSeq;
+      post({ type: "readImage", requestId: id, path: raw, attach: true });
+    }
+  }
+
+  function dropUriList(dt) {
+    var text = "";
+    try {
+      text = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
+    } catch (err) {
+      return [];
+    }
+    return text.split(/\r?\n/).filter(function (line) {
+      return line && line.charAt(0) !== "#";
+    });
+  }
+
   ["dragenter", "dragover"].forEach(function (ev) {
-    document.addEventListener(ev, function (e) {
+    window.addEventListener(ev, function (e) {
       if (!e.dataTransfer) return;
       var types = e.dataTransfer.types ? Array.prototype.slice.call(e.dataTransfer.types) : [];
-      if (types.indexOf("Files") < 0) return;
+      if (types.indexOf("Files") < 0 && types.indexOf("text/uri-list") < 0) return;
       e.preventDefault();
+      e.stopPropagation();
       e.dataTransfer.dropEffect = "copy";
-    });
+    }, true);
   });
 
-  document.addEventListener("drop", function (e) {
+  window.addEventListener("drop", function (e) {
     if (!e.dataTransfer) return;
     var files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
     var images = 0;
-    for (var di = 0; di < files.length; di++) {
-      if (files[di].type && files[di].type.indexOf("image/") === 0) images++;
+    if (files) {
+      for (var di = 0; di < files.length; di++) {
+        if (files[di].type && files[di].type.indexOf("image/") === 0) images++;
+      }
     }
-    if (images === 0) return;
+    var uris = dropUriList(e.dataTransfer);
+    if (images === 0 && uris.length === 0) return;
     e.preventDefault();
-    attachFiles(files);
-  });
+    e.stopPropagation();
+    if (images > 0) attachFiles(files);
+    if (uris.length > 0) attachPaths(uris);
+  }, true);
 
   function send() {
     var text = inputEl.value.trim();

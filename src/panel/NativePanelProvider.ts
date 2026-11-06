@@ -427,6 +427,8 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             blank: item.blank,
             updatedAt: item.updatedAt,
             title: this.projectionValue<string>(item.sessionId, "title") ?? undefined,
+            // Grouping key for the picker. The upstream bridge discarded it.
+            cwd: item.cwd,
             usage: this.projectionValue<PanelSession["usage"]>(item.sessionId, "tokenUsage"),
             stats: this.projectionValue<PanelSession["stats"]>(item.sessionId, "sessionStats"),
             context: this.projectionValue<PanelSession["context"]>(item.sessionId, "contextPressure"),
@@ -443,6 +445,8 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           blank: true,
           updatedAt: Date.now(),
           title: "新会话",
+          // Created from this window, so it belongs to the open folder.
+          cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
           usage: undefined,
           stats: undefined,
           context: undefined,
@@ -492,6 +496,41 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       this.log(`workspace: ${(error as Error).message}`);
       return undefined;
     }
+  }
+
+  /**
+   * Open a local file in the editor.
+   *
+   * A Windows path handed to `openExternal` parses as scheme "c" and the shell
+   * launch fails with 0x2 ("cannot find the file"); a missing target is
+   * reported here instead of being thrown at the OS.
+   */
+  private openLocalTarget(raw: string): void {
+    let abs = raw.trim();
+    if (/^file:/i.test(abs)) {
+      try {
+        abs = vscode.Uri.parse(abs).fsPath;
+      } catch {
+        /* keep the raw string */
+      }
+    }
+    try {
+      abs = decodeURIComponent(abs);
+    } catch {
+      /* already decoded */
+    }
+    if (!path.isAbsolute(abs)) {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (folder) abs = path.join(folder.uri.fsPath, abs);
+    }
+    if (!fs.existsSync(abs)) {
+      this.post({ type: "error", message: `File not found: ${abs}` });
+      return;
+    }
+    void vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true }).then(
+      () => undefined,
+      (error) => this.post({ type: "error", message: describeHarnessFailure("打开文件失败", error) }),
+    );
   }
 
   private async onMessage(message: WebviewMessage): Promise<void> {
@@ -625,12 +664,14 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             requestId: message.requestId,
             mediaType: type,
             data: fs.readFileSync(abs).toString("base64"),
+            attach: message.attach === true,
           });
         } catch (error) {
           this.post({
             type: "imageData",
             requestId: message.requestId,
             error: describeHarnessFailure("读取本地图片失败", error),
+            attach: message.attach === true,
           });
         }
         break;
@@ -761,22 +802,19 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "openFile": {
-        let abs = message.path;
-        if (!path.isAbsolute(abs)) {
-          const folder = vscode.workspace.workspaceFolders?.[0];
-          if (folder) abs = path.join(folder.uri.fsPath, abs);
-        }
-        void vscode.window
-          .showTextDocument(vscode.Uri.file(abs), { preview: true })
-          .then(
-            () => undefined,
-            (error) => this.post({ type: "error", message: describeHarnessFailure("打开文件失败", error) })
-          );
+        this.openLocalTarget(String(message.path ?? ""));
         break;
       }
       case "openExternal": {
         try {
-          const uri = vscode.Uri.parse(message.url);
+          const raw = String(message.url ?? "");
+          // Local targets must not reach the shell: Uri.parse("C:\…") reads
+          // "c" as a scheme and the launch dies with 0x2.
+          if (/^file:/i.test(raw) || /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) {
+            this.openLocalTarget(raw);
+            break;
+          }
+          const uri = vscode.Uri.parse(raw);
           void vscode.env.openExternal(uri).then(
             () => undefined,
             (error) => this.post({ type: "error", message: describeHarnessFailure("打开链接失败", error) })
