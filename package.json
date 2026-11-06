@@ -132,7 +132,7 @@
         "dshVsc.token": {
           "type": "string",
           "default": "",
-          "description": "DSH 0.2.1 起，所有 /api 调用与事件流都要用 `dsh web` 启动时打印的 token 换 cookie。本扩展自己启动的服务会自动从启动输出里读到 token，无需填写；只有手动运行了 `dsh web`（或连 WSL 里的实例）时才需要把那条带 token=… 的 URL 或 token 本身粘到这里。token 每次启动都会变。"
+          "description": "Since DSH 0.2.1, every /api call and event stream requires a cookie exchanged for the token printed by `dsh web` at launch. A harness this extension starts itself reads the token from its launch output, so nothing needs filling in; only when you started `dsh web` manually (or connect to an instance inside WSL) do you paste that token=… URL or the token itself here. The token changes on every launch."
         }
       }
     }
@@ -141,7 +141,8 @@
     "typecheck": "tsc --noEmit",
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "package": "node esbuild.js && vsce package --no-dependencies"
+    "i18n": "node scripts/apply-i18n.mjs",
+    "package": "node esbuild.js && node scripts/apply-i18n.mjs && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

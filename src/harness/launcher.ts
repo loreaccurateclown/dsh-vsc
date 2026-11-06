@@ -32,7 +32,24 @@ export function clearLaunchToken(): void {
 /** Pull the token out of one line of `dsh web` output. */
 function captureLaunchToken(line: string): void {
   const match = /[?&]token=([A-Za-z0-9_-]+)/.exec(line);
-  if (match) launchToken = match[1];
+  if (!match) return;
+  launchToken = match[1];
+  // External windows (an Edge/Chrome app window, a script) are second clients
+  // of this same harness and cannot mint the auth cookie without the launch
+  // token, which is otherwise process-local and never written to disk. Publish
+  // it to a per-user temp file so a launcher can read it; see README →
+  // "External window". Best effort: the panel works without it.
+  try {
+    const urlMatch = /(https?:\/\/[^\s?]+)/.exec(line);
+    const url = (urlMatch?.[1] ?? "http://127.0.0.1:3080").replace(/\/+$/, "");
+    writeFileSync(
+      join(tmpdir(), "dsh-vsc-token.json"),
+      JSON.stringify({ url, token: match[1], ts: Date.now() }, null, 2),
+      "utf8",
+    );
+  } catch {
+    /* the panel does not depend on this file */
+  }
 }
 
 /**
