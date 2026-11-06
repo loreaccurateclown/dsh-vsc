@@ -2021,6 +2021,19 @@
         scheduleRender();
         break;
       }
+      case "clipboardImage": {
+        if (!clipboardRequests[msg.requestId]) break;
+        delete clipboardRequests[msg.requestId];
+        if (msg.data) {
+          pushAttachment(msg.mediaType, msg.data, "");
+        } else {
+          statusEl.textContent = "Paste failed: " + (msg.error || "no image on the clipboard");
+          setTimeout(function () {
+            if (statusEl.textContent.indexOf("Paste failed:") === 0) statusEl.textContent = "";
+          }, 6000);
+        }
+        break;
+      }
       case "attachment": {
         var attId = msg.attachmentId || imageWaiters[msg.requestId];
         delete imageWaiters[msg.requestId];
@@ -3445,7 +3458,82 @@
         reader.readAsDataURL(file);
       }
     }
-    if (got) e.preventDefault();
+    if (got) {
+      e.preventDefault();
+      return;
+    }
+    // Chromium usually exposes no image item for an OS screenshot, so a paste
+    // that carried no text is likely an image: ask the extension host to read
+    // the platform clipboard (see src/panel/clipboard.ts).
+    var hasText = false;
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].kind === "string") {
+        hasText = true;
+        break;
+      }
+    }
+    if (!hasText) requestClipboardImage();
+  });
+
+  /* ---------- attachments from the host (clipboard paste) ---------- */
+
+  var clipboardRequestSeq = 0;
+  var clipboardRequests = {};
+
+  function pushAttachment(mediaType, data, name) {
+    if (!data) return;
+    attachments.push({ mediaType: mediaType || "image/png", data: data, name: name || "" });
+    renderAttachments();
+  }
+
+  function requestClipboardImage() {
+    var id = ++clipboardRequestSeq;
+    clipboardRequests[id] = true;
+    post({ type: "readClipboardImage", requestId: id });
+    // Drop the marker if the host never answers, so a later paste can retry.
+    setTimeout(function () { delete clipboardRequests[id]; }, 10000);
+  }
+
+  /* ---------- drag & drop images (the webview receives real files) ---------- */
+
+  function attachFiles(files) {
+    if (!files) return;
+    for (var fi = 0; fi < files.length; fi++) {
+      (function (file) {
+        if (!file.type || !/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          var result = String(reader.result || "");
+          var comma = result.indexOf(",");
+          if (comma < 0) return;
+          pushAttachment(file.type, result.slice(comma + 1), file.name || "");
+        };
+        reader.readAsDataURL(file);
+      })(files[fi]);
+    }
+  }
+
+  ["dragenter", "dragover"].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      if (!e.dataTransfer) return;
+      var types = e.dataTransfer.types ? Array.prototype.slice.call(e.dataTransfer.types) : [];
+      if (types.indexOf("Files") < 0) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+  });
+
+  document.addEventListener("drop", function (e) {
+    if (!e.dataTransfer) return;
+    var files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var images = 0;
+    for (var di = 0; di < files.length; di++) {
+      if (files[di].type && files[di].type.indexOf("image/") === 0) images++;
+    }
+    if (images === 0) return;
+    e.preventDefault();
+    attachFiles(files);
   });
 
   function send() {

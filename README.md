@@ -20,6 +20,7 @@ Read this in: **English** · [简体中文](README.zh.md)
 
 - [Why dsh-vsc](#why-dsh-vsc)
 - [Features](#features)
+- [Attaching images](#attaching-images)
 - [Screenshots](#screenshots)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -61,6 +62,44 @@ If you already use DSH (web GUI or CLI) and you work in VS Code, `dsh-vsc` turns
 
 **Harness lifecycle**
 - Reuses a running DSH (shared client, no second server); auto-starts one only when none is reachable; self-heals (respawns on death with backoff); reference-counted shutdown (never kills a harness another client is using). Full detail in [How it works](#how-it-works).
+
+## Attaching images
+
+Images reach the composer two ways, and they are deliberately different mechanisms.
+
+**Drag & drop** — drop PNG / JPEG / WebP / GIF files onto the panel. The webview
+receives real `DataTransfer` files, so the bytes are read in-page and attached
+directly: no extension-host round-trip, no platform tooling, no latency.
+
+**Clipboard paste** — `Ctrl+V` in the composer:
+
+1. The panel first looks for an image item in the paste event
+   (`clipboardData.items`). Where Chromium exposes one, that is the whole path.
+2. VS Code webviews normally expose only *text* there — the OS image never
+   reaches the page. When the paste carried no text, the panel asks the
+   extension host to read the platform clipboard.
+3. The host reads it with the platform's own clipboard tooling
+   (`src/panel/clipboard.ts`) and returns a PNG as base64:
+
+   | Platform | Mechanism | Status |
+   |---|---|---|
+   | Windows | `powershell.exe -STA` + `System.Windows.Forms.Clipboard.GetImage()` | implemented, tested |
+   | macOS | JXA / `NSPasteboard`, `public.png` representation | implemented, untested |
+   | Linux | `wl-paste --type image/png`, falling back to `xclip -t image/png -o` | implemented, untested |
+
+4. The result lands in the same attachment rail as a dropped file.
+
+Things worth knowing:
+
+- The clipboard round-trip costs roughly **200–800 ms** (it spawns a process);
+  drag & drop is instant.
+- If the clipboard holds no image, or the platform tool is missing or blocked,
+  the panel says so in its status line and attaches nothing — nothing is sent.
+- On Windows this spawns a short-lived PowerShell process. Some EDR or policy
+  setups block that; drag & drop is unaffected.
+- Both paths exist because VS Code's clipboard API is text-only and a webview
+  paste event cannot read OS image bytes — an external tool is the only way to
+  support paste at all.
 
 ## Screenshots
 
