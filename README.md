@@ -19,6 +19,7 @@ Read this in: **English** · [简体中文](README.zh.md)
 ## Table of contents
 
 - [Why dsh-vsc](#why-dsh-vsc)
+- [What this fork adds](#what-this-fork-adds)
 - [Features](#features)
 - [Attaching images](#attaching-images)
 - [Screenshots](#screenshots)
@@ -33,6 +34,54 @@ Read this in: **English** · [简体中文](README.zh.md)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
+
+## What this fork adds
+
+This repository is a fork of [zhibailu/dsh-vsc](https://github.com/zhibailu/dsh-vsc)
+at `master` (0.3.14). It keeps the "pure bridge" contract — same protocol, same
+wire shapes — and adds the following on top. Everything else is upstream's.
+
+**English UI.** Upstream ships a Chinese-only panel. `scripts/apply-i18n.mjs`
+rewrites the built artifacts from the zh→en tables in `i18n/maps/` between
+esbuild and `vsce package`, so the translation is part of the build rather than a
+patch on an installed copy. It only touches the extension's own strings: DSH,
+its profiles, and its own `zh`/`en` dictionaries are untouched. Code comments
+stay in Chinese.
+
+**Image attachments.** Drag & drop (VS Code delivers either `DataTransfer`
+files or a `uri-list`; both are handled) and `Ctrl+V` clipboard paste. Because
+VS Code's clipboard API is text-only and a webview paste event never carries OS
+image bytes, the clipboard is read through the platform seam in
+`src/panel/clipboard.ts`: PowerShell `-STA` + `GetImage()` on Windows (tested),
+JXA/`NSPasteboard` on macOS, `wl-paste`/`xclip` on Linux (implemented, untested
+here). See [Attaching images](#attaching-images).
+
+**Local links open in the editor.** Upstream sent every markdown `href` to
+`vscode.env.openExternal`, so a Windows path like `C:\shots\a.png` parsed as URL
+scheme `c` and the shell failed with `0x2` ("cannot find the file"). Local
+targets (drive letter, UNC, `file:`) now open in the editor with an existence
+check; only real URLs reach the external handler.
+
+**Session picker grouped by folder.** The harness's `session/list` rows carry
+`cwd`; upstream dropped it when mapping to the panel. It is carried through
+again, and the top dropdown renders one `<optgroup>` per workspace folder:
+- groups and rows keep the incoming order (most recently updated first);
+- the label is the folder's leaf name, qualified with the parent segment when
+  two folders share a leaf name (the full path is the group's tooltip);
+- sessions without a `cwd` remain plain options, so nothing upstream relied on
+  is lost.
+
+**External-window token export.** `captureLaunchToken()` now also writes
+`%TEMP%\dsh-vsc-token.json` (`{url, token, ts}`). A second client of the same
+harness — e.g. a browser app window launched by
+[`dsh-window`](https://github.com/loreaccurateclown/dsh_window) — can
+authenticate without hand-copying the per-process token. The file is absent when
+the extension merely attaches to a harness it did not start.
+
+**Build.** `npm run package` now runs `esbuild` → `apply-i18n` → `vsce package`.
+`npm run typecheck` and `npm run build` are unchanged.
 
 ---
 
@@ -67,9 +116,11 @@ If you already use DSH (web GUI or CLI) and you work in VS Code, `dsh-vsc` turns
 
 Images reach the composer two ways, and they are deliberately different mechanisms.
 
-**Drag & drop** — drop PNG / JPEG / WebP / GIF files onto the panel. The webview
-receives real `DataTransfer` files, so the bytes are read in-page and attached
-directly: no extension-host round-trip, no platform tooling, no latency.
+**Drag & drop** — drop PNG / JPEG / WebP / GIF files onto the panel. VS Code
+delivers a drop either as `DataTransfer` files or as a VS Code `uri-list`; the
+panel handles both. File drops are read in-page (no round-trip); path drops ask
+the extension host for the bytes (`readImage` with `attach`). Listeners run in
+the capture phase so the host's "open the dropped file" default never wins.
 
 **Clipboard paste** — `Ctrl+V` in the composer:
 
@@ -100,6 +151,9 @@ Things worth knowing:
 - Both paths exist because VS Code's clipboard API is text-only and a webview
   paste event cannot read OS image bytes — an external tool is the only way to
   support paste at all.
+- **Links to local files open in the editor**, not through the OS shell:
+  `vscode.Uri.parse("C:\…")` would read `c` as a URL scheme and the launch
+  fails with `0x2`. Missing files are reported in the panel instead.
 
 ## Screenshots
 

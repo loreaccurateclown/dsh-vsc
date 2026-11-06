@@ -144,6 +144,8 @@ export type HostMessage =
       /** base64 payload; absent when `error` is set. */
       data?: string;
       error?: string;
+      /** The requester wanted bytes for the composer rail, not an <img>. */
+      attach?: boolean;
     }
   | {
       /**
@@ -210,6 +212,8 @@ export type WebviewMessage =
       type: "readImage";
       requestId: number;
       path: string;
+      /** Attach the bytes to the composer instead of filling an <img>. */
+      attach?: boolean;
     }
   | { type: "openSettings" };
 
@@ -219,6 +223,11 @@ export interface PanelSession {
   blank: boolean;
   updatedAt: number;
   title?: string;
+  /**
+   * Workspace directory the session belongs to. The upstream panel dropped this
+   * from `SessionSummary`; the picker uses it to group sessions by folder.
+   */
+  cwd?: string;
   /** Current agent preset of the session (agentPreset.list/select domain). */
   agentPreset?: string;
   /** tokenUsage projection (aggregate over the durable log). */
