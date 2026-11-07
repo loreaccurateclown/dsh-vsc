@@ -107,6 +107,13 @@ hidden** when the current model reports no reasoning efforts — no dead control
 with a placeholder label. A model that *has* efforts but no current selection
 still shows the button.
 
+Model switches also apply on the **first** click. The harness's model catalog
+reports the previous `default` for a short while after `session/selectModel`
+(measured: stale immediately, correct at ~400 ms), so refreshing straight from
+it repainted the old model and the picker looked like it needed two clicks. The
+host now posts the confirmed selection immediately and reconciles from the
+catalog after 500 ms.
+
 **External-window token export.** `captureLaunchToken()` now also writes
 `%TEMP%\dsh-vsc-token.json` (`{url, token, ts}`). A second client of the same
 harness — e.g. a browser app window launched by
