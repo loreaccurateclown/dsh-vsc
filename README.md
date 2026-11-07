@@ -101,6 +101,12 @@ renders one `<optgroup>` per workspace:
 > path), and using the new location registers a second workspace. The picker
 > shows exactly what the harness reports, so both may appear.
 
+**Composer controls.** The model picker sizes to its label (capped at 240 px,
+then ellipsis) instead of a fixed width, and the **reasoning-effort button is
+hidden** when the current model reports no reasoning efforts — no dead control
+with a placeholder label. A model that *has* efforts but no current selection
+still shows the button.
+
 **External-window token export.** `captureLaunchToken()` now also writes
 `%TEMP%\dsh-vsc-token.json` (`{url, token, ts}`). A second client of the same
 harness — e.g. a browser app window launched by
