@@ -94,10 +94,12 @@
         </select>
       </div>
       <div class="row">
-        <label>Max attachment (MB)</label>
-        <input id="ext-maxattach" type="number" min="0" step="1">
+        <label>Attachment size limit</label>
+        <select id="ext-attach-limit">
+          <option value="on">on — up to 50 MB</option>
+          <option value="off">off — no limit</option>
+        </select>
       </div>
-      <div class="row"><span class="mono">0 = no limit. Applies to dropped/pasted files and path reads.</span></div>
       <div class="row">
         <label>Message timestamps</label>
         <select id="ext-timestamps">
@@ -451,10 +453,10 @@
    *  stuck in the wrong language looks for the gear in the panel, not VS Code. */
   function applyExtensionSettings(value) {
     value = value || {};
-    var lang = $("ext-language"), arrows = $("ext-arrows"), cap = $("ext-maxattach");
+    var lang = $("ext-language"), arrows = $("ext-arrows"), limit = $("ext-attach-limit");
     if (lang) lang.value = value.language || "auto";
     if (arrows) arrows.value = value.promptArrowKeys || "history";
-    if (cap) cap.value = value.maxAttachMB === undefined ? 50 : value.maxAttachMB;
+    if (limit) limit.value = value.attachSizeLimit === false ? "off" : "on";
     var stamps = $("ext-timestamps");
     if (stamps) stamps.value = value.messageTimestamps === false ? "off" : "on";
   }
@@ -467,9 +469,8 @@
   $("ext-timestamps").addEventListener("change", function () {
     pushExtensionSetting("messageTimestamps", this.value === "on");
   });
-  $("ext-maxattach").addEventListener("change", function () {
-    var n = Number(this.value);
-    pushExtensionSetting("maxAttachMB", isFinite(n) && n >= 0 ? Math.floor(n) : 50);
+  $("ext-attach-limit").addEventListener("change", function () {
+    pushExtensionSetting("attachSizeLimit", this.value === "on");
   });
 
   vscode.postMessage({ type: "settingsReady" });

@@ -85,7 +85,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       // Settings the panel reads from its state frame: re-send it so a change
       // made in VS Code Settings applies without a reload.
-      if (event.affectsConfiguration("dshVsc.promptArrowKeys") || event.affectsConfiguration("dshVsc.maxAttachMB")) {
+      if (event.affectsConfiguration("dshVsc.promptArrowKeys") || event.affectsConfiguration("dshVsc.attachSizeLimit")) {
         panel.refreshConfig();
       }
     }),
