@@ -424,8 +424,13 @@
   #settings-btn:hover { background: var(--input-bg); }
   #perm-btn, #model-btn, #effort-btn { flex: none; border: 1px solid var(--border); border-radius: 3px;
                           background: var(--input-bg); color: var(--fg); cursor: pointer;
-                          font-size: 11px; padding: 3px 8px; max-width: 128px;
+                          font-size: 11px; padding: 3px 8px;
                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Model names vary in length: size to the label, capped so the composer keeps
+     room for the input; the cap is where the ellipsis starts. */
+  #model-btn { max-width: 240px; }
+  #perm-btn { max-width: 128px; }
+  #effort-btn { max-width: 110px; }
   #perm-btn:hover, #model-btn:hover, #effort-btn:hover { border-color: var(--accent); }
 </style>
 </head>
@@ -2890,7 +2895,16 @@
   /* reasoning-effort button: its own popup, right of the model button */
   function renderEffortButton() {
     var cur = state.models && state.models.current;
-    if (!cur) { effortBtnEl.hidden = true; effortBtnEl.textContent = ""; return; }
+    var efforts = currentEfforts();
+    // A model with no reasoning efforts has nothing to pick: drop the control
+    // instead of showing a dead button with a placeholder label.
+    var hasReasoning = !!(cur && (cur.reasoningEffort || (efforts && efforts.length > 0)));
+    if (!cur || !hasReasoning) {
+      effortBtnEl.hidden = true;
+      effortBtnEl.textContent = "";
+      effortMenuEl.hidden = true;
+      return;
+    }
     effortBtnEl.textContent = cur.reasoningEffort || "推理";
     effortBtnEl.hidden = false;
     if (!effortMenuEl.hidden) renderEffortMenu();
