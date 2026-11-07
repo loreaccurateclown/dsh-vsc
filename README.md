@@ -80,14 +80,19 @@ renders one `<optgroup>` per workspace:
   `<optgroup label>`, which made plain indentation invisible. Root workspaces
   keep their title (falling back to the folder's leaf name);
 - the labels are derived from the workspace rows at render time: no filesystem
-  access and no watchers. Moving, copying or renaming a folder shows up as a
-  `workspace/follow` upsert (or a refresh), and the next render simply
-  recomputes the relative paths;
+  access and no watchers. They are recomputed whenever the workspace baseline or
+  a `workspace/follow` frame refreshes the list;
 - the full path is the group's tooltip; colliding labels are qualified with the
   parent folder;
 - sessions in no workspace go under **Ungrouped**, exactly like the web GUI;
 - before the workspace baseline arrives the list stays flat instead of
   mislabelling every session as ungrouped.
+
+> **Workspace identity is the folder path** — a DSH rule this fork deliberately
+> does not work around. Moving or copying a folder on disk therefore does *not*
+> relabel its existing sessions: the old workspace row keeps them (and its old
+> path), and using the new location registers a second workspace. The picker
+> shows exactly what the harness reports, so both may appear.
 
 **External-window token export.** `captureLaunchToken()` now also writes
 `%TEMP%\dsh-vsc-token.json` (`{url, token, ts}`). A second client of the same
