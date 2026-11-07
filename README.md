@@ -13,6 +13,23 @@
 
 ---
 
+## Human summary of this fork
+
+This is a fork of zhibailu's dsh-vsc I made with DeepSeekV4.1 Flash because of accumulated frustrations with other DSH VS Code extensions, especially regarding their cavalier handling of the DSH process on my system. I ended up liking the minimal UI a lot as it fits the limited chat panel space in VS Code better, and then made some changes to bring some cosmetic features from other harnesses forward.
+
+**Note:** This extension has its own settings menu (gear icon to the right of the session picker) in addition to its VS Code settings. Where possible I've tried to ensure that you can configure it from both but I've focused more on the extension's settings page than VS Code's.
+
+You can now:
+- View images inline with read_image
+- Copy and paste images up to 50 MB (Look at the agent's readme below this for specifics)
+  - Note that this is fairly expensive due to having to deal with OS level stuff. If you know what you're doing you can disable the 50 MB file size limit in the extension's settings menu.
+- Swap between an English and Chinese translation in both VS Code settings and the extension's gear menu
+- UI QoL: See current workspace at the top of your session, session list is now organized by workspace folder name and organized by folder hierarchy (i.e. if /A/B/C, A/ and C/ are seperate workspaces C will show under A as B/C/), per message timestamps (toggleable), model picker adjusts width to model name
+- Checks webview status and offers to Quit VS Code if there's a webview error. For more details check the agent readme below, but it's a bug that happens if you close VS Code with a DSH webview open and then restart it too quickly. Good news is the bug always clears on your relaunch no matter how quick it is (within a human's reaction time)
+
+
+---
+
 ## What this fork adds
 
 **English UI, togglable.** Upstream ships Chinese-only. The fork keeps every upstream string byte-for-byte — Chinese stays the original — and adds a translation table in `i18n/maps/` (`zh ⇄ en`). `scripts/gen-i18n-tables.mjs` compiles it into a runtime module; webview templates are translated as they load and host strings go through `t()`, so no build step rewrites upstream's artifacts. Messages with values use `tf("已打开 {0} 个 diff。", n)` — placeholders rather than concatenation, so each language keeps its own word order. `dshVsc.language` selects `auto` (follow VS Code), `en`, or `zh`; `zh` renders upstream's exact strings, so nothing is re-translated in either direction, and a string missing from the table falls back to Chinese rather than breaking. Code comments stay in Chinese.
@@ -94,7 +111,7 @@ No API key is needed here: the key stays on the DSH side. The extension is a sha
 | `dshVsc.language` | `auto` | `auto` / `en` / `zh` for this extension's own UI, including its notifications and errors. `zh` is upstream's original strings. Changing it rebuilds the panel. |
 | `dshVsc.messageTimestamps` | `true` | Wall-clock times in the transcript: every user message, and each turn as "Round N · HH:MM". Reads the session log's own event times, so history replays identically. |
 | `dshVsc.promptArrowKeys` | `history` | `history` = terminal Up/Down through previous prompts; `caret` = Up/Down move the cursor in the draft. |
-| `dshVsc.maxAttachMB` | `50` | Size cap for anything read on the panel's behalf (path reads, clipboard images, drops). `0` disables it. |
+| `dshVsc.attachSizeLimit` | `true` | Cap anything read on the panel's behalf (path reads, clipboard images, dropped images) at 50 MB. Off removes the limit entirely. |
 
 ## Notes
 
