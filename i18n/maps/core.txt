@@ -150,5 +150,6 @@ DSH 0.2.1 起，所有 /api 调用与事件流都要用 `dsh web` 启动时打�
 插件	<=>	Plugins
 (未知文件)	<=>	(unknown file)
 Copy失败：面板发不出消息（	<=>	Copy failed: the panel could not send the message (
-Copy中…	<=>	Copying…
+复制中…	<=>	Copying…
 ✗ Copy失败	<=>	✗ Copy failed
+复制代码	<=>	Copy code

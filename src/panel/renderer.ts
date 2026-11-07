@@ -125,21 +125,48 @@ function isLocalImagePath(url: string): boolean {
  *  URL first keeps the path intact through parsing. */
 const LOCAL_IMAGE_SENTINEL = "/dsh-local/";
 
+/** Destinations micromark's sanitizer would drop: local paths *and* `data:` URIs
+ *  (measured: `![a](data:image/png;base64,AAAA)` compiles to `<img src="">`). */
+function needsSentinel(dest: string): boolean {
+  return isLocalImagePath(dest) || /^data:/i.test(dest);
+}
+
 /** Rewrite local image destinations into the sentinel form before parsing. */
 function encodeLocalImageTargets(md: string): string {
   return md.replace(/(!\[[^\]]*\]\()\s*<?([^)>\s]+)>?\s*(\))/g, (whole, head: string, dest: string, tail: string) =>
-    isLocalImagePath(dest) ? `${head}${LOCAL_IMAGE_SENTINEL}${encodeURIComponent(dest)}${tail}` : whole
+    needsSentinel(dest) ? `${head}${LOCAL_IMAGE_SENTINEL}${encodeURIComponent(dest)}${tail}` : whole
   );
+}
+
+/** Real remote destinations — the only ones the shell may be asked to open. */
+function isRemoteUrl(url: string): boolean {
+  return /^(?:https?:\/\/|mailto:)/i.test(url);
+}
+
+/** Inline `data:` images are the one payload no admission check guards: the
+ *  bytes are already in the transcript, so a multi-megabyte one would land in
+ *  the DOM before anything could object. The panel publishes the cap as
+ *  `__DSH_MAX_DATA_URL__` (0 = disabled); over it, the frame degrades to text. */
+function dataImage(url: string, rest: string): string {
+  const cap = (globalThis as unknown as { __DSH_MAX_DATA_URL__?: number }).__DSH_MAX_DATA_URL__;
+  if (typeof cap === "number" && cap > 0 && url.length > cap) {
+    return `<span class="md-img-link" title="inline image exceeds the size cap">[图片]</span>`;
+  }
+  return `<img src="${url.replace(/"/g, "&quot;")}"${rest}>`;
 }
 
 /** Rewrite every markdown <img> in an HTML fragment: remote sources become
  *  links (CSP img-src blocks http), local files become `data-local-src`
  *  placeholders the panel hydrates through the host. Runs on the WHOLE
  *  fragment, not just top-level paragraphs — images inside list items or
- *  quotes would otherwise reach the webview as an unloadable src. */
+ *  quotes would otherwise reach the webview as an unloadable src.
+ *
+ *  Anything that is not a remote URL counts as a file reference, absolute or
+ *  relative: `terrain/newicon.png` is what the assistant actually writes, and
+ *  routing that to `openExternal` fails in the shell with 0x2 on Windows. */
 function rewriteImages(html: string): string {
   return html.replace(/<img\s+src="([^"]*)"([^>]*)>/g, (m, url: string, rest: string) => {
-    if (url.startsWith("data:")) return m;
+    if (url.startsWith("data:")) return dataImage(url, rest);
     if (url.startsWith(LOCAL_IMAGE_SENTINEL)) {
       let target = url.slice(LOCAL_IMAGE_SENTINEL.length);
       try {
@@ -147,11 +174,19 @@ function rewriteImages(html: string): string {
       } catch {
         /* keep the encoded form */
       }
+      // A `data:` URI survives the CSP and needs no host round-trip.
+      if (/^data:/i.test(target)) return dataImage(target, rest);
       return `<img class="md-img" data-local-src="${target.replace(/"/g, "&quot;")}"${rest}>`;
     }
-    if (isLocalImagePath(url)) return `<img class="md-img" data-local-src="${url.replace(/"/g, "&quot;")}"${rest}>`;
     if (url === "") return m;
-    return `<a class="md-img-link" href="${url}">[图片]</a>`;
+    if (isRemoteUrl(url)) return `<a class="md-img-link" href="${url}">[图片]</a>`;
+    let target = url;
+    try {
+      target = decodeURIComponent(url);
+    } catch {
+      /* keep the encoded form */
+    }
+    return `<img class="md-img" data-local-src="${target.replace(/"/g, "&quot;")}"${rest}>`;
   });
 }
 

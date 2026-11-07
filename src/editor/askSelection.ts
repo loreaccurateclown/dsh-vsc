@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 import type { HarnessClient } from "../harness/client";
 import { currentEditorContext, formatEditorContext } from "./context";
+import { t, tf } from "../i18n";
 
 export const INTENT_CHOICES = [
-  { id: "explain", label: "解释", detail: "解释这段代码在做什么、为什么这么写" },
-  { id: "review", label: "代码审查", detail: "审查这段代码的问题与改进点" },
-  { id: "fix", label: "修复/改进", detail: "让 agent 直接修改这段代码" },
-  { id: "custom", label: "自定义…", detail: "自己输入指令" },
+  { id: "explain", label: t("解释"), detail: t("解释这段代码在做什么、为什么这么写") },
+  { id: "review", label: t("代码审查"), detail: t("审查这段代码的问题与改进点") },
+  { id: "fix", label: t("修复/改进"), detail: t("让 agent 直接修改这段代码") },
+  { id: "custom", label: t("自定义…"), detail: t("自己输入指令") },
 ];
 
 const SELECTION_CAP = 4000;
@@ -35,14 +36,14 @@ export async function buildSelectionContext(): Promise<string | null> {
 export async function askSelection(getClient: () => HarnessClient | null): Promise<void> {
   const block = await buildSelectionContext();
   if (block === null) {
-    void vscode.window.showWarningMessage("DSH: 请先在编辑器里选中要询问的代码。");
+    void vscode.window.showWarningMessage(t("DSH: 请先在编辑器里选中要询问的代码。"));
     return;
   }
 
   const client = getClient();
   if (!client) {
-    const choice = await vscode.window.showWarningMessage("DSH: harness 未连接。", "启动 harness");
-    if (choice === "启动 harness") {
+    const choice = await vscode.window.showWarningMessage(t("DSH: harness 未连接。"), t("启动 harness"));
+    if (choice === t("启动 harness")) {
       void vscode.commands.executeCommand("dsh.start");
     }
     return;
@@ -50,15 +51,15 @@ export async function askSelection(getClient: () => HarnessClient | null): Promi
 
   const picked = await vscode.window.showQuickPick(
     INTENT_CHOICES.map(({ id, label, detail }) => ({ label, detail, id })),
-    { placeHolder: "要 agent 对这个选区做什么？" }
+    { placeHolder: t("要 agent 对这个选区做什么？") }
   );
   if (!picked) return;
 
   let instruction: string;
   if (picked.id === "custom") {
     const input = await vscode.window.showInputBox({
-      prompt: "指令",
-      placeHolder: "例如：这段代码有什么 bug？怎么修？",
+      prompt: t("指令"),
+      placeHolder: t("例如：这段代码有什么 bug？怎么修？"),
     });
     if (input === undefined) return;
     instruction = input.trim();
@@ -78,7 +79,7 @@ export async function sendAsk(client: HarnessClient, contextBlock: string, instr
   const sessionId = await targetSession(client);
   await client.prompt(sessionId, [{ type: "text", text: message }], "queue");
   const short = sessionId.replace(/^session-/, "").slice(0, 8);
-  void vscode.window.showInformationMessage(`DSH: 已排队发送到会话 ${short}（${instruction}）。`);
+  void vscode.window.showInformationMessage(tf("DSH: 已排队发送到会话 {0}（{1}）。", short, instruction));
   void vscode.commands.executeCommand("dsh.sidebar.right.focus");
 }
 

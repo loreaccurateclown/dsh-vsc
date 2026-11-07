@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativePanelProvider } from "./panel/NativePanelProvider";
 import { renderEmbedHtml } from "./panel/embed";
+import { resetLangCache, t, tf } from "./i18n";
 import { DshStatusBar } from "./status";
 import { HarnessClient } from "./harness/client";
 import { configuredBase, discover, portOf } from "./harness/discover";
+import { shutdownGapMs, writeShutdownMarker } from "./startup";
 import {
   startHarness,
   stopHarness,
@@ -21,7 +23,6 @@ import { ChangeTracker } from "./editor/changeTracker";
 import { buildSelectionContext } from "./editor/askSelection";
 import { reviewFiles } from "./editor/diff";
 import type { PanelEvent } from "./panel/protocol";
-
 const POLL_MS = 1000;
 const START_TIMEOUT_MS = 90000;
 const RIGHT_VIEW = "dsh.sidebar.right";
@@ -29,7 +30,11 @@ const MAX_SPAWN_FAILURES = 3; // consecutive auto-spawn failures before giving u
 const OFFLINE_RECHECK_MS = 15000; // slow poll while down-but-not-our-job (user may start one manually)
 const DISCONNECT_RECHECK_MS = 3000; // grace before probing after the event stream drops
 
+/** Kept only so `deactivate` (which receives no context) can write the shutdown marker. */
+let shutdownContext: vscode.ExtensionContext | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
+  shutdownContext = context;
   const log = vscode.window.createOutputChannel("DSH Bridge");
   const status = new DshStatusBar();
   const makeLog = (message: string): void => {
@@ -47,7 +52,22 @@ export function activate(context: vscode.ExtensionContext): void {
   let consecutiveSpawnFailures = 0;
   let checkTimer: NodeJS.Timeout | null = null;
 
-  const panel = new NativePanelProvider(context, makeLog, () => client, (cb) => panelListeners.add(cb));
+  // Diagnostics only: how soon this instance started after the previous quit.
+  // Deferring the panel was tried and does not help — the damage happens at
+  // launch, before any extension code runs. See src/startup.ts.
+  const startupGapMs = shutdownGapMs(context);
+
+  const panel = new NativePanelProvider(
+    context,
+    makeLog,
+    () => client,
+    (cb) => panelListeners.add(cb),
+    // Status bar doubles as the visible affordance when the panel's webview
+    // never starts — the panel itself cannot render anything in that state.
+    (dead) => (dead ? status.setPanelDead() : status.clearPanelDead()),
+    (starting) => status.setPanelStarting(starting),
+    startupGapMs,
+  );
 
   log.appendLine("dsh-vsc activated");
 
@@ -57,6 +77,18 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("dshVsc.language")) {
+        resetLangCache();
+        panel.reloadLanguage();
+        return;
+      }
+      // Settings the panel reads from its state frame: re-send it so a change
+      // made in VS Code Settings applies without a reload.
+      if (event.affectsConfiguration("dshVsc.promptArrowKeys") || event.affectsConfiguration("dshVsc.maxAttachMB")) {
+        panel.refreshConfig();
+      }
+    }),
     vscode.window.registerWebviewViewProvider(RIGHT_VIEW, panel, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
@@ -64,6 +96,32 @@ export function activate(context: vscode.ExtensionContext): void {
     tracker,
     vscode.commands.registerCommand("dsh.openSidebar", () => {
       void vscode.commands.executeCommand(`${RIGHT_VIEW}.focus`);
+    }),
+    // Panel recovery: the failed service-worker registration survives a window
+    // reload (it lives in the app's renderer process), so the only fix is a full
+    // quit. There is no supported "restart" command — VS Code restores the
+    // previous window when it is opened again.
+    //
+    // The consequences live in this one notification rather than a second modal:
+    // two clicks in two places was friction without adding a decision. The
+    // status-bar item opens this same notification, so a stray click there can
+    // never end the session.
+    vscode.commands.registerCommand("dsh.panelRecoveryInfo", async (gapText?: string) => {
+      const choice = await vscode.window.showWarningMessage(
+        t(
+          "DSH 面板的 webview 没能启动（VS Code 的 service worker 注册失败）。重新加载窗口无法修复——只有完全退出并重新启动 VS Code 才能恢复。退出会结束正在运行的终端和任务；重新打开时 VS Code 会恢复之前的窗口。",
+        ) +
+          (gapText ? `${gapText}。` : "") +
+          t("建议退出后等待十几秒再重新打开。"),
+        t("退出 VS Code"),
+      );
+      if (choice) void vscode.commands.executeCommand("dsh.quitForPanel");
+    }),
+    // User-initiated only: `workbench.action.quit` is VS Code's normal quit path,
+    // so its own guards (unsaved editors, confirmBeforeClose for running
+    // terminals/tasks) still run. We never kill the process ourselves.
+    vscode.commands.registerCommand("dsh.quitForPanel", () => {
+      void vscode.commands.executeCommand("workbench.action.quit");
     }),
     vscode.commands.registerCommand("dsh.start", () => {
       // Explicit start: clear every "don't respawn" latch and retry for real.
@@ -80,7 +138,7 @@ export function activate(context: vscode.ExtensionContext): void {
         log.appendLine("dsh web stopped (auto-started instance); not respawning until dsh:start or window reload");
       } else {
         void vscode.window.showInformationMessage(
-          "DSH Bridge：当前服务不是本扩展启动的（可能是你手动运行的 dsh web）。扩展无权停止它；要彻底停掉请关掉对应的终端。"
+          t("DSH Bridge：当前服务不是本扩展启动的（可能是你手动运行的 dsh web）。扩展无权停止它；要彻底停掉请关掉对应的终端。")
         );
       }
     }),
@@ -94,12 +152,12 @@ export function activate(context: vscode.ExtensionContext): void {
       void (async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.selection.isEmpty) {
-          void vscode.window.showWarningMessage("DSH: 请先在编辑器里选中要询问的代码。");
+          void vscode.window.showWarningMessage(t("DSH: 请先在编辑器里选中要询问的代码。"));
           return;
         }
         if (!client) {
-          const choice = await vscode.window.showWarningMessage("DSH: harness 未连接。", "启动 harness");
-          if (choice === "启动 harness") void vscode.commands.executeCommand("dsh.start");
+          const choice = await vscode.window.showWarningMessage(t("DSH: harness 未连接。"), t("启动 harness"));
+          if (choice === t("启动 harness")) void vscode.commands.executeCommand("dsh.start");
           return;
         }
         const block = await buildSelectionContext();
@@ -143,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // so recycle it instead of stranding the panel.
     if (before.alive && harnessRunning() && !hasCredential()) {
       log.appendLine(
-        "harness 还活着，但它的 token 随着上次窗口一起没了（0.2.1 token 只存在内存里）——重启我们自己启动的那个实例"
+        t("harness 还活着，但它的 token 随着上次窗口一起没了（0.2.1 token 只存在内存里）——重启我们自己启动的那个实例")
       );
       await stopHarness();
       await new Promise((resolve) => setTimeout(resolve, 400));
@@ -285,8 +343,8 @@ export function activate(context: vscode.ExtensionContext): void {
     if (authPrompted.has(base)) return false;
     authPrompted.add(base);
     const input = await vscode.window.showInputBox({
-      title: "DSH 需要认证（0.2.1 起）",
-      prompt: `请粘贴 ${base} 启动时打印的那条 URL（含 token=…）或 token 本身。本扩展自己启动的服务不需要这一步。`,
+      title: t("DSH 需要认证（0.2.1 起）"),
+      prompt: tf("请粘贴 {0} 启动时打印的那条 URL（含 token=…）或 token 本身。本扩展自己启动的服务不需要这一步。", base),
       placeHolder: "http://127.0.0.1:3080/?token=…",
       ignoreFocusOut: true,
     });
@@ -416,6 +474,9 @@ function logDeactivate(line: string): void {
  * worse than stopping it: stop what we started.
  */
 export function deactivate(): Promise<void> {
+  // Record when this instance let go, so the next cold start can tell whether it
+  // restarted too quickly for VS Code's webview state to have been released.
+  if (shutdownContext) writeShutdownMarker(shutdownContext);
   logDeactivate("deactivate called");
   const owned = harnessRunning();
   const record = readPidRecord();

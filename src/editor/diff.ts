@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { t, tf } from "../i18n";
 
 function execGit(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,12 +21,12 @@ function execGit(args: string[], cwd: string): Promise<string> {
 export async function reviewFiles(files: string[]): Promise<void> {
   const unique = [...new Set(files.filter((f) => typeof f === "string" && f.length > 0))];
   if (unique.length === 0) {
-    void vscode.window.showInformationMessage("DSH: 还没有捕获到 agent 的文件改动。在侧边栏让 agent 改几个文件后，再点这里。");
+    void vscode.window.showInformationMessage(t("DSH: 还没有捕获到 agent 的文件改动。在侧边栏让 agent 改几个文件后，再点这里。"));
     return;
   }
 
   const items = [
-    { label: "$(check-all) 全部（" + unique.length + " 个文件）", description: "逐个打开原生 diff", file: null as string | null },
+    { label: t("$(check-all) 全部（") + unique.length + t(" 个文件）"), description: t("逐个打开原生 diff"), file: null as string | null },
     ...unique.map((file) => ({
       label: path.basename(file),
       description: path.dirname(file),
@@ -34,7 +35,7 @@ export async function reviewFiles(files: string[]): Promise<void> {
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: "选择要审查的文件",
+    placeHolder: t("选择要审查的文件"),
     canPickMany: false,
   });
   if (!picked) return;
@@ -48,14 +49,14 @@ export async function reviewFiles(files: string[]): Promise<void> {
     else failures.push(file);
   }
   if (opened > 0) {
-    void vscode.window.showInformationMessage(`DSH: 已打开 ${opened} 个 diff。`);
+    void vscode.window.showInformationMessage(tf("DSH: 已打开 {0} 个 diff。", opened));
   }
   if (failures.length > 0) {
     const choice = await vscode.window.showWarningMessage(
-      `DSH: ${failures.length} 个文件无法做 git diff（未跟踪或不在仓库内）。`,
-      "直接打开文件"
+      tf("DSH: {0} 个文件无法做 git diff（未跟踪或不在仓库内）。", failures.length),
+      t("直接打开文件")
     );
-    if (choice === "直接打开文件") {
+    if (choice === t("直接打开文件")) {
       for (const file of failures) {
         await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true });
       }
@@ -81,7 +82,7 @@ async function openGitDiff(file: string): Promise<boolean> {
       "vscode.diff",
       vscode.Uri.file(tmpFile),
       vscode.Uri.file(file),
-      `HEAD → 工作区: ${rel}`,
+      tf("HEAD → 工作区: {0}", rel),
       { preview: true }
     );
     return true;

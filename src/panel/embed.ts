@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs";
+import { resolveLang, translateUi } from "../i18n";
 
 /**
  * Embed shell rendering for the optional "advanced web view" (dsh.openWebView).
@@ -13,7 +14,7 @@ export function renderEmbedHtml(
 ): string {
   const shellPath = vscode.Uri.joinPath(context.extensionUri, "dist", "media", "shell.html");
   let html = fs.readFileSync(shellPath.fsPath, "utf8");
-  html = html
+  html = translateUi(html, resolveLang())
     .replaceAll("__DSH_URL__", escapeHtml(base))
     .replaceAll("__DSH_HOST__", cspHostOf(base));
   return html;

@@ -1,0 +1,17 @@
+DSH: 已排队发送到会话 {0}（{1}）。	<=>	DSH: queued to session {0} ({1}).
+DSH: 已打开 {0} 个 diff。	<=>	DSH: opened {0} diff(s).
+DSH: {0} 个文件无法做 git diff（未跟踪或不在仓库内）。	<=>	DSH: {0} file(s) cannot be diffed against git (untracked, or outside the repo).
+HEAD → 工作区: {0}	<=>	HEAD → working tree: {0}
+DSH 服务连续 {0} 次没在 {1}s 内就绪，停止自动重启；改为每 {2}s 只看一眼，一旦它起来了自动接上（也可执行 dsh: Start Web Harness 手动重试）	<=>	the DSH service did not become ready {0} times within {1}s; auto-restart is off. It now probes every {2}s and reconnects once it is up (or run "dsh: Start Web Harness" to retry).
+请粘贴 {0} 启动时打印的那条 URL（含 token=…）或 token 本身。本扩展自己启动的服务不需要这一步。	<=>	Paste the URL printed when {0} starts (including token=…) or the token itself. A harness this extension starts needs neither.
+dsh connect: HTTP {0}（token 无效或已被替换）	<=>	dsh connect: HTTP {0} (token invalid or superseded)
+dsh connect: 未收到认证 cookie	<=>	dsh connect: no auth cookie received
+{0}：{1}（DSH 本体限制，不是本扩展的问题）	<=>	{0}: {1} (a DSH host limit, not an extension issue)
+{0}：该模型不接受图像输入，而本会话已包含图片（DSH 本体的限制，不是本扩展的问题）。请改选支持图像输入的模型。	<=>	{0}: this model does not accept image input, but the session already contains images (a DSH host limit, not an extension issue). Choose a model that accepts images.
+{0}：DSH 本体拒绝了这次请求（{1}）。原文：{2}	<=>	{0}: the DSH host rejected this request ({1}). Original: {2}
+图片过大：{0} MB	<=>	Image too large: {0} MB
+命令已执行：{0}	<=>	Command executed: {0}
+剪贴板里不是刚复制的内容（要求 {0} 字符，回读 {1} 字符）	<=>	the clipboard does not hold the copied text (expected {0} chars, read back {1})
+读取历史失败：这个会话是 0.1.x 时代的旧日志，DSH 0.2.x 要先做格式迁移，而本体的迁移链拒绝了它（DSH 本体行为，不是本扩展的问题）。原文：{0}	<=>	Failed to read history: this session is a 0.1.x-era log and DSH 0.2.x must migrate it first, but the host's migration chain rejected it (DSH host behaviour, not an extension issue). Original: {0}
+复制失败：{0}	<=>	Copy failed: {0}
+（本次 VS Code 是在上次退出后约 {0} 秒启动的——这是已知的触发条件）	<=>	 (this VS Code started about {0}s after the previous one quit — the known trigger)

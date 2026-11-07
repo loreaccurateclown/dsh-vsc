@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { t } from "../i18n";
 import {
   METHODS,
   TRANSPORT,
@@ -30,7 +31,7 @@ export class RpcErrorResult extends Error {
 /** The harness answered 401: this client holds no valid API cookie yet. */
 export class HarnessAuthRequired extends Error {
   constructor() {
-    super("dsh web 要求认证：缺少有效的 API cookie");
+    super(t("dsh web 要求认证：缺少有效的 API cookie"));
     this.name = "HarnessAuthRequired";
   }
 }

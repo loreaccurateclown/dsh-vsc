@@ -43,6 +43,13 @@ export type HostMessage =
        * sessions that belong to no workspace ("Ungrouped").
        */
       workspaces?: { workspaceId: string; title: string; path: string }[];
+      /** Byte cap the panel applies before reading a dropped or pasted file.
+       *  `null` (or absent) means the limit is disabled. */
+      maxAttachBytes?: number | null;
+      /** Composer arrow behaviour: `history` = terminal Up/Down, `caret` = editor. */
+      promptArrowKeys?: "history" | "caret";
+      /** Show times in the transcript (user messages + turn labels). */
+      messageTimestamps?: boolean;
       activeSessionId: string | null;
     }
   | { type: "event"; sessionId: string; event: PanelEvent }
@@ -105,6 +112,21 @@ export type HostMessage =
       presets: { id: string; name?: string; description?: string; isDefault?: boolean }[];
     }
   | { type: "error"; message: string }
+  | {
+      /** Targeted config push for values the panel reads on input events.
+       *  Delivered on its own so a stuck state frame cannot leave the composer
+       *  on a stale arrow mode. */
+      type: "config";
+      promptArrowKeys: "history" | "caret";
+      maxAttachBytes: number | null;
+      messageTimestamps: boolean;
+    }
+  | {
+      /** Resolution of an async clipboard write; `ok=false` carries the reason. */
+      type: "copyResult";
+      ok: boolean;
+      message: string;
+    }
   | {
       /**
        * Live metrics for the active session, pushed the moment the matching
@@ -183,7 +205,22 @@ export type WebviewMessage =
   | { type: "getModels" }
   | { type: "selectModel"; provider: string; model: string; reasoningEffort?: string }
   | { type: "copyText"; text: string; requestId?: string }
+  | {
+      /** The panel script is alive and has run its init. The host uses this as a
+       *  liveness handshake: no `panelReady` after a load means the webview is
+       *  broken (VS Code's service-worker bug) and gets retried. */
+      type: "panelReady";
+    }
+  | { type: "panelLog"; text: string }
   | { type: "readClipboardImage"; requestId: number }
+  | {
+      /** Put an image on the OS clipboard. The webview cannot: its native Copy
+       *  command copies the DOM selection as text, never image bytes. */
+      type: "copyImage";
+      mediaType: string;
+      /** base64 payload without the `data:` prefix. */
+      data: string;
+    }
   | { type: "openFile"; path: string }
   | { type: "queueSteer"; itemId: string }
   | { type: "queueRemove"; itemId: string }

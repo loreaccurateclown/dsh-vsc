@@ -76,6 +76,36 @@
 
   <!-- 通用设置 -->
   <section id="tab-general">
+    <div class="card" id="ext-settings">
+      <h3>Extension Settings <span class="mono">(dsh-vsc, not DSH)</span></h3>
+      <div class="row">
+        <label>Language</label>
+        <select id="ext-language">
+          <option value="auto">auto — follow VS Code</option>
+          <option value="en">English</option>
+          <option value="zh">中文 (upstream's original)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Arrow keys in prompt</label>
+        <select id="ext-arrows">
+          <option value="history">history — Up/Down walk previous prompts (terminal)</option>
+          <option value="caret">caret — Up/Down move the cursor in the text (editor)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Max attachment (MB)</label>
+        <input id="ext-maxattach" type="number" min="0" step="1">
+      </div>
+      <div class="row"><span class="mono">0 = no limit. Applies to dropped/pasted files and path reads.</span></div>
+      <div class="row">
+        <label>Message timestamps</label>
+        <select id="ext-timestamps">
+          <option value="on">on — time on every user message and each turn</option>
+          <option value="off">off</option>
+        </select>
+      </div>
+    </div>
     <div class="card">
       <h3>默认模型 <span class="mono">(agent-default-model)</span></h3>
       <div class="row"><label>provider</label><input id="in-def-provider" type="text"></div>
@@ -412,8 +442,34 @@
     if (!msg) return;
     if (msg.type === "settingsData") { applyData(msg.value); }
     else if (msg.type === "settingsAgentPresets") { applyPresets(msg.value); }
+    else if (msg.type === "settingsExtension") { applyExtensionSettings(msg.value); }
     else if (msg.type === "settingsError") { setStatus(msg.message, "err"); }
     else if (msg.type === "settingsSaved") { setStatus(msg.message || "已保存", "ok"); }
+  });
+
+  /** This extension's own knobs — deliberately first on the General tab: a user
+   *  stuck in the wrong language looks for the gear in the panel, not VS Code. */
+  function applyExtensionSettings(value) {
+    value = value || {};
+    var lang = $("ext-language"), arrows = $("ext-arrows"), cap = $("ext-maxattach");
+    if (lang) lang.value = value.language || "auto";
+    if (arrows) arrows.value = value.promptArrowKeys || "history";
+    if (cap) cap.value = value.maxAttachMB === undefined ? 50 : value.maxAttachMB;
+    var stamps = $("ext-timestamps");
+    if (stamps) stamps.value = value.messageTimestamps === false ? "off" : "on";
+  }
+
+  function pushExtensionSetting(key, value) {
+    vscode.postMessage({ type: "setExtensionSetting", key: key, value: value });
+  }
+  $("ext-language").addEventListener("change", function () { pushExtensionSetting("language", this.value); });
+  $("ext-arrows").addEventListener("change", function () { pushExtensionSetting("promptArrowKeys", this.value); });
+  $("ext-timestamps").addEventListener("change", function () {
+    pushExtensionSetting("messageTimestamps", this.value === "on");
+  });
+  $("ext-maxattach").addEventListener("change", function () {
+    var n = Number(this.value);
+    pushExtensionSetting("maxAttachMB", isFinite(n) && n >= 0 ? Math.floor(n) : 50);
   });
 
   vscode.postMessage({ type: "settingsReady" });
