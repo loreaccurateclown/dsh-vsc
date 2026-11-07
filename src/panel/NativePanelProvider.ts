@@ -8,7 +8,8 @@ import type { HostMessage, PanelEvent, PanelSession, TodoItem, ToolLineDiff, Web
 import type { WorkspaceView } from "../harness/protocol";
 import { countMetaDiff, countToolArgsDiff } from "../editor/diffCount";
 import { INTENT_CHOICES, sendAsk } from "../editor/askSelection";
-import { readClipboardImage } from "./clipboard";
+import { readClipboardImage, writeClipboardImage } from "./clipboard";
+import { resolveLang, t, tf, translateUi } from "../i18n";
 
 /**
  * Display copy for the four shipped agent presets — the official zh text from
@@ -19,20 +20,20 @@ import { readClipboardImage } from "./clipboard";
  */
 const OFFICIAL_PRESET_COPY: Record<string, { name: string; description: string }> = {
   standard: {
-    name: "标准模式",
-    description: "功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。",
+    name: t("标准模式"),
+    description: t("功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。"),
   },
   code: {
-    name: "PTC 模式",
-    description: "具备标准模式的全部能力，并通过 Code Mode SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。",
+    name: t("PTC 模式"),
+    description: t("具备标准模式的全部能力，并通过 Code Mode SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。"),
   },
   minimal: {
-    name: "极简模式",
-    description: "仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。",
+    name: t("极简模式"),
+    description: t("仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。"),
   },
   cordis: {
-    name: "创造模式",
-    description: "用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。",
+    name: t("创造模式"),
+    description: t("用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。"),
   },
 };
 
@@ -53,24 +54,24 @@ const OFFICIAL_PRESET_COPY: Record<string, { name: string; description: string }
  * limit is duplicated here: quoting this deployment's numbers would be the
  * bridge re-modelling a core fact that the deployment config owns.
  */
-const ATTACHMENT_REASON_COPY: Record<string, string> = {  IMAGE_DIMENSION_TOO_LARGE: "图片单边像素超过本体上限，请先裁剪或缩小后再发。",
-  IMAGE_TOO_MANY_PIXELS: "图片总像素超过本体上限，请先缩小后再发。",
-  IMAGE_TOO_LARGE: "单张图片体积超过本体上限，请压缩后再发。",
-  TOO_MANY_IMAGES: "单条消息的图片数量超过本体上限，请分批发送。",
-  IMAGES_TOO_LARGE: "单条消息的图片总体积超过本体上限，请分批发送。",
-  UNSUPPORTED_IMAGE_TYPE: "本部署不接受这种图片格式。",
-  IMAGE_TYPE_MISMATCH: "图片实际格式与声明的类型不一致，请重新复制粘贴。",
-  INVALID_IMAGE: "图片已损坏或格式无法识别，请重新复制粘贴。",
-  INVALID_IMAGE_BASE64: "图片数据不完整，请重新复制粘贴。",
-  INVALID_ATTACHMENT_REF: "这个图片引用无效（会话记录里查不到）。",
-  ATTACHMENT_NOT_FOUND: "这张图片在本体里已不存在（可能已被清理）。",
-  ATTACHMENT_NOT_REFERENCED: "这张图片不属于当前会话，本体拒绝读取。",
-  ATTACHMENT_CORRUPT: "本体里的这张图片已损坏，无法读取。",
-  ATTACHMENT_READ_FAILED: "本体读取这张图片失败。",
-  ATTACHMENT_WRITE_FAILED: "本体保存这张图片失败（磁盘或权限问题）。",
+const ATTACHMENT_REASON_COPY: Record<string, string> = {  IMAGE_DIMENSION_TOO_LARGE: t("图片单边像素超过本体上限，请先裁剪或缩小后再发。"),
+  IMAGE_TOO_MANY_PIXELS: t("图片总像素超过本体上限，请先缩小后再发。"),
+  IMAGE_TOO_LARGE: t("单张图片体积超过本体上限，请压缩后再发。"),
+  TOO_MANY_IMAGES: t("单条消息的图片数量超过本体上限，请分批发送。"),
+  IMAGES_TOO_LARGE: t("单条消息的图片总体积超过本体上限，请分批发送。"),
+  UNSUPPORTED_IMAGE_TYPE: t("本部署不接受这种图片格式。"),
+  IMAGE_TYPE_MISMATCH: t("图片实际格式与声明的类型不一致，请重新复制粘贴。"),
+  INVALID_IMAGE: t("图片已损坏或格式无法识别，请重新复制粘贴。"),
+  INVALID_IMAGE_BASE64: t("图片数据不完整，请重新复制粘贴。"),
+  INVALID_ATTACHMENT_REF: t("这个图片引用无效（会话记录里查不到）。"),
+  ATTACHMENT_NOT_FOUND: t("这张图片在本体里已不存在（可能已被清理）。"),
+  ATTACHMENT_NOT_REFERENCED: t("这张图片不属于当前会话，本体拒绝读取。"),
+  ATTACHMENT_CORRUPT: t("本体里的这张图片已损坏，无法读取。"),
+  ATTACHMENT_READ_FAILED: t("本体读取这张图片失败。"),
+  ATTACHMENT_WRITE_FAILED: t("本体保存这张图片失败（磁盘或权限问题）。"),
   // 0.2.1 additions (same attachment core, more call sites reach them)
-  QUEUE_EDIT_NON_TEXT: "队列里的消息只支持编辑文字内容。",
-  FILE_NOT_STAGED: "这个文件没有上传到本会话，请重新附加。",
+  QUEUE_EDIT_NON_TEXT: t("队列里的消息只支持编辑文字内容。"),
+  FILE_NOT_STAGED: t("这个文件没有上传到本会话，请重新附加。"),
 };
 
 /**
@@ -100,12 +101,15 @@ function describeHarnessFailure(prefix: string, error: unknown): string {
     // bare `attachment-error`; both spellings are accepted so the copy table
     // keeps working if the code moves again.
     if ((code === "session/attachment-invalid" || code === "attachment-error") && reason && ATTACHMENT_REASON_COPY[reason]) {
-      return `${prefix}：${ATTACHMENT_REASON_COPY[reason]}（DSH 本体限制，不是本扩展的问题）`;
+      return tf("{0}：{1}（DSH 本体限制，不是本扩展的问题）", prefix, ATTACHMENT_REASON_COPY[reason]);
     }
     if (reason === "MODEL_DOES_NOT_SUPPORT_IMAGES" || code === "session/model-unavailable" || code === "model-unavailable") {
-      return `${prefix}：该模型不接受图像输入，而本会话已包含图片（DSH 本体的限制，不是本扩展的问题）。请改选支持图像输入的模型。`;
+      return tf(
+        "{0}：该模型不接受图像输入，而本会话已包含图片（DSH 本体的限制，不是本扩展的问题）。请改选支持图像输入的模型。",
+        prefix,
+      );
     }
-    return `${prefix}：DSH 本体拒绝了这次请求（${code}）。原文：${message}`;
+    return tf("{0}：DSH 本体拒绝了这次请求（{1}）。原文：{2}", prefix, code, message);
   }
   return `${prefix}：${(error as Error).message}`;
 }
@@ -157,17 +161,22 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly log: (message: string) => void,
     private readonly getClient: () => HarnessClient | null,
-    private readonly onSessionEvent: (cb: (sessionId: string, event: PanelEvent) => void) => void
+    private readonly onSessionEvent: (cb: (sessionId: string, event: PanelEvent) => void) => void,
+    /** Panel liveness for the status bar: `true` = webview never started. */
+    private readonly onPanelDead: (dead: boolean) => void = () => undefined,
+    /** First paint is being deferred while the editor starts up. */
+    private readonly onPanelStarting: (starting: boolean) => void = () => undefined,
+    /** How soon this instance started after the previous quit, for diagnostics. */
+    private readonly startupGapMs?: number
   ) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
-    const html = this.renderHtml();
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "dist", "media")],
     };
-    webviewView.webview.html = html;
+    this.attachPanelHtml();
     webviewView.webview.onDidReceiveMessage((message) => {
       void this.onMessage(message as WebviewMessage);
     });
@@ -303,7 +312,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
    */
   private remoteClientId(): string {
     const id = this.stream?.remoteClientId;
-    if (!id) throw new Error("事件流尚未就绪（缺少 $events clientId），请稍后重试");
+    if (!id) throw new Error(t("事件流尚未就绪（缺少 $events clientId），请稍后重试"));
     return id;
   }
 
@@ -403,7 +412,15 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
 
   async refresh(): Promise<void> {
     if (!this.client) {
-      this.post({ type: "state", connected: false, sessions: [], activeSessionId: null });
+      this.post({
+        type: "state",
+        connected: false,
+        sessions: [],
+        maxAttachBytes: this.maxAttachBytes() ?? null,
+        messageTimestamps: this.timestampsEnabled(),
+        promptArrowKeys: this.promptArrowMode(),
+        activeSessionId: null,
+      });
       return;
     }
     try {
@@ -464,7 +481,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           running: false,
           blank: true,
           updatedAt: Date.now(),
-          title: "新会话",
+          title: t("新会话"),
           // Created from this window, so it belongs to the open folder.
           cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
           workspaceId: this.workspaceIdForFolder(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
@@ -487,7 +504,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         this.postPermissions();
       }
     } catch (error) {
-      this.post({ type: "error", message: describeHarnessFailure("会话列表失败", error) });
+      this.post({ type: "error", message: describeHarnessFailure(t("会话列表失败"), error) });
     }
   }
 
@@ -528,6 +545,42 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Directories a transcript-relative path may be relative to, most specific
+   * first: the active session's DSH workspace — that is the session's cwd, and
+   * it is *not* necessarily the folder open in VS Code — then the VS Code
+   * folders, then the extension host's cwd.
+   *
+   * Measured case: a session in `…\default-workspace` writes `renders/x.png`,
+   * while the editor has `…\StrategyGamev1` open. Resolving against the editor
+   * folder alone reported ENOENT for a file that exists.
+   */
+  private localBaseDirs(): string[] {
+    const dirs: string[] = [];
+    const sessionId = this.activeSessionId;
+    if (sessionId) {
+      for (const workspace of this.workspaces) {
+        if ((workspace.sessionIds ?? []).includes(sessionId) && workspace.path) dirs.push(workspace.path);
+      }
+    }
+    for (const folder of vscode.workspace.workspaceFolders ?? []) dirs.push(folder.uri.fsPath);
+    dirs.push(process.cwd());
+    return [...new Set(dirs)];
+  }
+
+  /**
+   * Size cap for anything this extension reads on the panel's behalf, in bytes.
+   *
+   * `dshVsc.maxAttachMB: 0` means disabled — a single value instead of a
+   * boolean, so there is no second "enabled" state to test. The default (50 MB)
+   * matches DSH Web Chat, and is a transport guard: the harness still applies
+   * its own admission limits to images, and stores generic files verbatim.
+   */
+  private maxAttachBytes(): number | undefined {
+    const mb = vscode.workspace.getConfiguration("dshVsc").get<number>("maxAttachMB", 50);
+    return typeof mb === "number" && mb > 0 ? Math.floor(mb * 1024 * 1024) : undefined;
+  }
+
+  /**
    * Open a local file in the editor.
    *
    * A Windows path handed to `openExternal` parses as scheme "c" and the shell
@@ -549,8 +602,8 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       /* already decoded */
     }
     if (!path.isAbsolute(abs)) {
-      const folder = vscode.workspace.workspaceFolders?.[0];
-      if (folder) abs = path.join(folder.uri.fsPath, abs);
+      const bases = this.localBaseDirs();
+      abs = bases.map((base) => path.join(base, abs)).find((candidate) => fs.existsSync(candidate)) ?? path.join(bases[0], abs);
     }
     if (!fs.existsSync(abs)) {
       this.post({ type: "error", message: `File not found: ${abs}` });
@@ -558,19 +611,58 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     }
     void vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true }).then(
       () => undefined,
-      (error) => this.post({ type: "error", message: describeHarnessFailure("打开文件失败", error) }),
+      (error) => this.post({ type: "error", message: describeHarnessFailure(t("打开文件失败"), error) }),
     );
   }
 
   private async onMessage(message: WebviewMessage): Promise<void> {
+    if (message.type === "panelReady") {
+      this.panelReady = true;
+      this.healNotified = false;
+      this.onPanelDead(false);
+      if (this.readyTimer) {
+        clearTimeout(this.readyTimer);
+        this.readyTimer = undefined;
+      }
+      return;
+    }
     // Clipboard work is local to the window and must not depend on the harness
     // being reachable — "harness 未连接" used to swallow a copy outright.
     if (message.type === "copyText") {
       await this.handleCopy(message.text, message.requestId);
       return;
     }
+    // TEMP DIAGNOSTIC: the panel echoes what it received, so a lost reply is
+    // visible in the DSH Bridge log instead of being guessed at.
+    if (message.type === "panelLog") {
+      this.log(`panel: ${String(message.text ?? "")}`);
+      return;
+    }
+    // Image copy is local too: the clipboard is the destination, the harness is
+    // irrelevant. This is what the native right-click "Copy" cannot do — it
+    // copies the selection as text, and a webview has no image on it.
+    if (message.type === "copyImage") {
+      const mediaType = String(message.mediaType ?? "image/png");
+      const data = String(message.data ?? "");
+      this.log(`copyImage: ${mediaType}, ${Math.round((data.length * 3) / 4 / 1024)} KB`);
+      try {
+        let result = await writeClipboardImage(mediaType, data);
+        // The writer proves its own write in-process (GetImage after SetImage, so
+        // no second PowerShell spawn); a non-ok result means "locked or not
+        // decodable", which is worth exactly one retry.
+        if (!result.ok) result = await writeClipboardImage(mediaType, data);
+        this.log(`copyImage: ${result.ok ? "ok" : `failed — ${result.error}`}`);
+        if (result.ok) this.post({ type: "copyResult", ok: true, message: t("图片已复制") });
+        else this.post({ type: "copyResult", ok: false, message: tf("复制失败：{0}", result.error) });
+      } catch (error) {
+        // Never leave the panel waiting: an unexpected throw must still resolve.
+        this.log(`copyImage: threw — ${String(error)}`);
+        this.post({ type: "copyResult", ok: false, message: tf("复制失败：{0}", String(error)) });
+      }
+      return;
+    }
     if (!this.client) {
-      this.post({ type: "error", message: "harness 未连接" });
+      this.post({ type: "error", message: t("harness 未连接") });
       return;
     }
     switch (message.type) {
@@ -580,6 +672,18 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         // reported, not thrown — drag & drop keeps working regardless.
         const clipboard = await readClipboardImage();
         if (clipboard.ok) {
+          // The clipboard is the one input we cannot pre-check: the bytes are
+          // already read by the time we see them, so the cap applies after.
+          const cap = this.maxAttachBytes();
+          const bytes = Math.floor((clipboard.data.length * 3) / 4);
+          if (cap !== undefined && bytes > cap) {
+            this.post({
+              type: "clipboardImage",
+              requestId: message.requestId,
+              error: tf("附件过大：{0} MB", (bytes / 1024 / 1024).toFixed(1)),
+            });
+            break;
+          }
           this.post({
             type: "clipboardImage",
             requestId: message.requestId,
@@ -635,7 +739,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             void this.postModels();
           }, 500);
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("切换模型失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("切换模型失败"), error) });
         }
         break;
       }
@@ -646,7 +750,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         // placeholder rather than an empty box.
         const sessionId = message.sessionId || this.activeSessionId;
         try {
-          if (!sessionId) throw new Error("没有活动会话");
+          if (!sessionId) throw new Error(t("没有活动会话"));
           const value = await this.client.sessionAttachment(sessionId, message.attachmentId);
           this.post({
             type: "attachment",
@@ -664,7 +768,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             type: "attachment",
             requestId: message.requestId,
             attachmentId: message.attachmentId,
-            error: describeHarnessFailure("读取图片失败", error),
+            error: describeHarnessFailure(t("读取图片失败"), error),
           });
         }
         break;
@@ -677,14 +781,30 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         // this into an arbitrary file read.
         try {
           const raw = String(message.path ?? "").trim();
-          if (!raw) throw new Error("空路径");
+          if (!raw) throw new Error(t("空路径"));
           let decoded = raw;
           try {
             decoded = decodeURIComponent(raw);
           } catch {
             /* already decoded */
           }
-          const abs = path.isAbsolute(decoded) ? decoded : path.resolve(decoded);
+          // The assistant writes workspace-relative paths (`renders/x.png`),
+          // relative to the *session's* workspace — try that first, then the
+          // editor's folders, then the host cwd.
+          const candidates: string[] = [];
+          if (path.isAbsolute(decoded)) {
+            candidates.push(decoded);
+          } else {
+            for (const base of this.localBaseDirs()) candidates.push(path.join(base, decoded));
+          }
+          const exists = (candidate: string): boolean => {
+            try {
+              return fs.statSync(candidate).isFile();
+            } catch {
+              return false;
+            }
+          };
+          const abs = candidates.find(exists) ?? candidates[0];
           const mime: Record<string, string> = {
             ".png": "image/png",
             ".jpg": "image/jpeg",
@@ -695,10 +815,13 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             ".avif": "image/avif",
           };
           const type = mime[path.extname(abs).toLowerCase()];
-          if (!type) throw new Error(`不支持的图片类型：${path.extname(abs) || "（无扩展名）"}`);
+          if (!type) throw new Error(`不支持的图片类型：${path.extname(abs) || t("（无扩展名）")}`);
           const stat = fs.statSync(abs);
-          if (!stat.isFile()) throw new Error("不是文件");
-          if (stat.size > 16 * 1024 * 1024) throw new Error(`图片过大：${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+          if (!stat.isFile()) throw new Error(t("不是文件"));
+          const cap = this.maxAttachBytes();
+          if (cap !== undefined && stat.size > cap) {
+            throw new Error(tf("附件过大：{0} MB", (stat.size / 1024 / 1024).toFixed(1)));
+          }
           this.post({
             type: "imageData",
             requestId: message.requestId,
@@ -710,7 +833,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           this.post({
             type: "imageData",
             requestId: message.requestId,
-            error: describeHarnessFailure("读取本地图片失败", error),
+            error: describeHarnessFailure(t("读取本地图片失败"), error),
             attach: message.attach === true,
           });
         }
@@ -729,7 +852,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           this.followActive();
           await this.refresh();
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("新建会话失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("新建会话失败"), error) });
         }
         break;
       }
@@ -754,7 +877,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           }
           await this.refresh();
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("删除会话失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("删除会话失败"), error) });
         }
         break;
       }
@@ -762,7 +885,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         const context = this.askContext;
         this.askContext = null;
         if (!context || !this.client) {
-          this.post({ type: "error", message: "Ask 卡片已失效，请重新选中代码再试。" });
+          this.post({ type: "error", message: t("Ask 卡片已失效，请重新选中代码再试。") });
           break;
         }
         const choice = INTENT_CHOICES.find((c) => c.id === message.choiceId);
@@ -772,7 +895,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         } else {
           const custom = (message.customText ?? "").trim();
           if (!custom) {
-            this.post({ type: "error", message: "请输入指令。" });
+            this.post({ type: "error", message: t("请输入指令。") });
             break;
           }
           instruction = custom;
@@ -780,7 +903,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         try {
           await sendAsk(this.client, context, instruction);
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("发送失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("发送失败"), error) });
         }
         break;
       }
@@ -789,7 +912,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         break;
       case "respondApproval": {
         if (!this.client) {
-          this.post({ type: "error", message: "harness 未连接" });
+          this.post({ type: "error", message: t("harness 未连接") });
           break;
         }
         try {
@@ -802,13 +925,13 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             value: message.outcome,
           });
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("审批应答失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("审批应答失败"), error) });
         }
         break;
       }
       case "respondQuestion": {
         if (!this.client) {
-          this.post({ type: "error", message: "harness 未连接" });
+          this.post({ type: "error", message: t("harness 未连接") });
           break;
         }
         try {
@@ -817,7 +940,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             value: { answers: message.answers },
           });
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("选择题应答失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("选择题应答失败"), error) });
         }
         break;
       }
@@ -834,10 +957,10 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           // run the slash command against the session's agent.
           const outcome = await this.client?.commandExecute(this.activeSessionId, `/permission ${message.permission}`);
           if (outcome === undefined || (outcome as { matched?: boolean }).matched === false) {
-            this.post({ type: "error", message: `切换权限失败: host 未提供 /permission 命令` });
+            this.post({ type: "error", message: t("切换权限失败: host 未提供 /permission 命令") });
           }
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("切换权限失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("切换权限失败"), error) });
         }
         break;
       }
@@ -848,19 +971,20 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       case "openExternal": {
         try {
           const raw = String(message.url ?? "");
-          // Local targets must not reach the shell: Uri.parse("C:\…") reads
-          // "c" as a scheme and the launch dies with 0x2.
-          if (/^file:/i.test(raw) || /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) {
+          // Only a real URL may reach the shell. `C:\…` reads "c" as a scheme
+          // and a relative path has no scheme at all; both die with 0x2
+          // ("cannot find the file"), so anything else is opened as a file.
+          if (!/^(?:https?:\/\/|mailto:)/i.test(raw)) {
             this.openLocalTarget(raw);
             break;
           }
           const uri = vscode.Uri.parse(raw);
           void vscode.env.openExternal(uri).then(
             () => undefined,
-            (error) => this.post({ type: "error", message: describeHarnessFailure("打开链接失败", error) })
+            (error) => this.post({ type: "error", message: describeHarnessFailure(t("打开链接失败"), error) })
           );
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("打开链接失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("打开链接失败"), error) });
         }
         break;
       }
@@ -874,7 +998,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         try {
           await this.client.updateQueue(this.activeSessionId, message.itemId, action);
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("队列操作失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("队列操作失败"), error) });
         }
         break;
       }
@@ -896,7 +1020,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             this.activeSessionId = sessionId;
             this.followActive();
           } catch (error) {
-            this.post({ type: "error", message: describeHarnessFailure("新建会话失败", error) });
+            this.post({ type: "error", message: describeHarnessFailure(t("新建会话失败"), error) });
             return;
           }
         }
@@ -907,12 +1031,12 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             const outcome = await this.client.commandExecute(sessionId, text);
             this.post({
               type: "cmdResult",
-              text: outcome?.result?.text ?? `命令已执行：${text}`,
+              text: outcome?.result?.text ?? tf("命令已执行：{0}", text),
               ok: outcome?.result?.kind !== "error",
             });
             await this.refresh();
           } catch (error) {
-            this.post({ type: "error", message: describeHarnessFailure("命令执行失败", error) });
+            this.post({ type: "error", message: describeHarnessFailure(t("命令执行失败"), error) });
           }
           return;
         }
@@ -921,7 +1045,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           this.post({ type: "running", sessionId, running: true });
           await this.refresh();
         } catch (error) {
-          this.post({ type: "error", message: describeHarnessFailure("发送失败", error) });
+          this.post({ type: "error", message: describeHarnessFailure(t("发送失败"), error) });
         }
         break;
       }
@@ -934,7 +1058,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             await this.client.cancel(this.activeSessionId);
             this.post({ type: "running", sessionId: this.activeSessionId, running: false });
           } catch (error) {
-            this.post({ type: "error", message: describeHarnessFailure("停止失败", error) });
+            this.post({ type: "error", message: describeHarnessFailure(t("停止失败"), error) });
           }
         }
         break;
@@ -1067,11 +1191,14 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       if (/failed to observe session|refuses this format|migration-required/i.test(text)) {
         this.post({
           type: "error",
-          message: `读取历史失败：这个会话是 0.1.x 时代的旧日志，DSH 0.2.x 要先做格式迁移，而本体的迁移链拒绝了它（DSH 本体行为，不是本扩展的问题）。原文：${text}`,
+          message: tf(
+          "读取历史失败：这个会话是 0.1.x 时代的旧日志，DSH 0.2.x 要先做格式迁移，而本体的迁移链拒绝了它（DSH 本体行为，不是本扩展的问题）。原文：{0}",
+          text,
+        ),
         });
         return;
       }
-      this.post({ type: "error", message: describeHarnessFailure("读取历史失败", error) });
+      this.post({ type: "error", message: describeHarnessFailure(t("读取历史失败"), error) });
     }
   }
 
@@ -1094,13 +1221,17 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
 
   /* ---------- bridge-computed per-tool line diffs ("+N-M") ---------- */
 
-  /** Resolve a possibly-relative tool path against the first workspace root. */
+  /** Resolve a possibly-relative tool path — same base order as images: the
+   *  session's workspace first, because the open folder is not necessarily the
+   *  folder the agent was working in. */
   private resolveToolPath(raw: string): string | null {
     if (!raw || raw.trim().length === 0) return null;
     if (path.isAbsolute(raw)) return raw;
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) return null;
-    return path.join(folder.uri.fsPath, raw);
+    const bases = this.localBaseDirs();
+    return (
+      bases.map((base) => path.join(base, raw)).find((candidate) => fs.existsSync(candidate)) ??
+      path.join(bases[0], raw)
+    );
   }
 
   /** Pre-write content of a file (best effort; the harness usually applies
@@ -1262,9 +1393,9 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     const LABELS: Record<string, string> = {
-      "read-only": "仅可查看",
-      "workspace-write": "可写入工作区",
-      "danger-full-access": "完全权限",
+      "read-only": t("仅可查看"),
+      "workspace-write": t("可写入工作区"),
+      "danger-full-access": t("完全权限"),
     };
     this.post({
       type: "permissions",
@@ -1331,12 +1462,28 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** "history" (terminal Up/Down) or "caret" (editor-style arrows). */
+  private promptArrowMode(): "history" | "caret" {
+    const value = vscode.workspace.getConfiguration("dshVsc").get<string>("promptArrowKeys", "history");
+    return value === "caret" ? "caret" : "history";
+  }
+
+  /** Transcript times: user messages and turn labels. */
+  private timestampsEnabled(): boolean {
+    return vscode.workspace.getConfiguration("dshVsc").get<boolean>("messageTimestamps", true) !== false;
+  }
+
   private postState(): void {
     this.post({
       type: "state",
       connected: this.connected,
       version: this.version,
       phase: this.phase,
+      // The panel checks `file.size` before reading bytes (drop / paste), so the
+      // cap has to travel with the state. `null` means disabled.
+      maxAttachBytes: this.maxAttachBytes() ?? null,
+        messageTimestamps: this.timestampsEnabled(),
+        promptArrowKeys: this.promptArrowMode(),
       // live title event wins; otherwise the projection title from session.list
       sessions: this.sessions.map((s) => ({ ...s, title: this.titles.get(s.sessionId) ?? s.title })),
       // Workspace rows in host order: the picker groups by these, and a session
@@ -1374,11 +1521,11 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         await new Promise((resolve) => setTimeout(resolve, 80));
         const second = await readBack();
         if (second !== undefined && normalise(second) !== normalise(text)) {
-          failure = `剪贴板里不是刚复制的内容（要求 ${text.length} 字符，回读 ${second.length} 字符）`;
+          failure = tf("剪贴板里不是刚复制的内容（要求 {0} 字符，回读 {1} 字符）", text.length, second.length);
         }
       }
     } catch (error) {
-      failure = describeHarnessFailure("复制失败", error);
+      failure = describeHarnessFailure(t("复制失败"), error);
     }
     this.log(`copy ${text.length} chars → ${failure ?? "verified"}`);
     if (failure) this.post({ type: "error", message: failure });
@@ -1404,7 +1551,96 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     } catch {
       /* keep the placeholder; the loading view degrades to text */
     }
-    return html;
+    const lang = resolveLang();
+    const translated = translateUi(html, lang);
+    // One line of evidence for "why is this still Chinese?" reports: which
+    // language won and how much CJK survived (comments are expected to).
+    const remaining = (translated.match(/[\u4e00-\u9fff]/g) ?? []).length;
+    this.log(`panel html: lang=${lang}, ${remaining} CJK char(s) left`);
+    return translated;
+  }
+
+  /** Re-send panel state after a setting it consumes from the state frame
+   *  changes in VS Code Settings (arrow mode, attachment cap). Both the state
+   *  frame and the targeted `config` push go out: the keydown handler must not
+   *  depend on a full refresh arriving. */
+  refreshConfig(): void {
+    this.post({
+      type: "config",
+      promptArrowKeys: this.promptArrowMode(),
+      maxAttachBytes: this.maxAttachBytes() ?? null,
+        messageTimestamps: this.timestampsEnabled(),
+    });
+    this.postState();
+  }
+
+  /** Re-render the panel template after a language change (webview.html can only   *  be assigned wholesale, so the view is rebuilt; it re-requests state on load). */
+  reloadLanguage(): void {
+    if (!this.view) return;
+    this.attachPanelHtml();
+  }
+
+  /* ---------- webview liveness watchdog ----------
+   * VS Code's webview host can fail to register its service worker
+   * (InvalidStateError) right after a cold start, leaving an iframe that never
+   * runs our script — with no error the extension can observe. The panel posts
+   * `panelReady` on every load, so silence is the signal.
+   *
+   * Re-assigning `webview.html` was tried and does NOT repair it: the failure is
+   * in the webview host, not in the document. A fresh extension host does fix
+   * it, so the remedy is a user-clicked Reload window — never an automated one,
+   * which would discard every webview and every other extension's state. */
+  private panelReady = false;
+  private readyTimer?: ReturnType<typeof setTimeout>;
+  /** One notification per load; cleared when the panel later signals ready. */
+  private healNotified = false;
+
+  /**
+   * How long to wait for `panelReady` before assuming the webview is dead.
+   *
+   * The handshake is posted at the top of the panel script, before any
+   * rendering, so it normally arrives in tens of milliseconds. One second is
+   * already generous for a cold parse of the inlined bundle; going much lower
+   * (or to zero) would fire on a slow load and cry wolf. There is no earlier
+   * signal available: the service-worker failure happens inside VS Code's host
+   * and is never reported to the extension.
+   */
+  private static readonly READY_TIMEOUT_MS = 1000;
+
+  private deferTimer?: ReturnType<typeof setTimeout>;
+
+  private attachPanelHtml(): void {
+    if (!this.view) return;
+    this.onPanelStarting(false);
+    this.panelReady = false;
+    this.healNotified = false;
+    this.view.webview.html = this.renderHtml();
+    if (this.readyTimer) clearTimeout(this.readyTimer);
+    this.readyTimer = setTimeout(() => this.reportDeadPanel(), NativePanelProvider.READY_TIMEOUT_MS);
+  }
+
+  /** Working panel → nothing happens; `panelReady` cancels the pending check. */
+  private reportDeadPanel(): void {
+    if (this.panelReady || this.healNotified || !this.view) return;
+    this.healNotified = true;
+    this.onPanelDead(true);
+    // Measured: this follows a *fast restart*. Reload Window cannot clear it —
+    // that restarts the extension host, while the failed service-worker
+    // registration belongs to this process and survives until VS Code is fully
+    // quit. The gap since the previous quit is the one useful diagnostic, so it
+    // goes in the log and in the message the user sees.
+    const gap = this.startupGapMs;
+    const gapText =
+      gap === undefined
+        ? ""
+        : gap < 20000
+          ? tf("（本次 VS Code 是在上次退出后约 {0} 秒启动的——这是已知的触发条件）", Math.round(gap / 1000))
+          : "";
+    this.log(
+      `panel silent for ${NativePanelProvider.READY_TIMEOUT_MS}ms — its webview never ran; only a full restart recovers this` +
+        (gap === undefined ? "" : ` (started ${Math.round(gap / 1000)}s after the previous quit)`),
+    );
+    void vscode.commands.executeCommand("dsh.panelRecoveryInfo", gapText);
   }
 
   /* ---------- settings panel (editor-area tab, opened by the ⚙ button) ---------- */
@@ -1421,7 +1657,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     }
     const panel = vscode.window.createWebviewPanel(
       "dsh.settings",
-      "DSH 设置",
+      t("DSH 设置"),
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -1433,19 +1669,81 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       this.settingsPanel = undefined;
     });
     const settingsPath = vscode.Uri.joinPath(this.context.extensionUri, "dist", "media", "native", "settings.html");
-    panel.webview.html = fs.readFileSync(settingsPath.fsPath, "utf8");
+    panel.webview.html = translateUi(fs.readFileSync(settingsPath.fsPath, "utf8"), resolveLang());
     panel.webview.onDidReceiveMessage((msg) => {
       void this.onSettingsMessage(msg as Record<string, unknown>);
     });
   }
 
+  /** This extension's own settings, shown first on the settings panel's General
+   *  tab. They are local VS Code config, so they work with the harness down. */
+  private postExtensionSettings(): void {
+    const cfg = vscode.workspace.getConfiguration("dshVsc");
+    try {
+      void this.settingsPanel?.webview.postMessage({
+        type: "settingsExtension",
+        value: {
+          language: cfg.get<string>("language", "auto"),
+          promptArrowKeys: cfg.get<string>("promptArrowKeys", "history"),
+        messageTimestamps: cfg.get<boolean>("messageTimestamps", true),
+          maxAttachMB: cfg.get<number>("maxAttachMB", 50),
+        },
+      });
+    } catch {
+      /* panel disposed */
+    }
+  }
+
+  private async setExtensionSetting(key: string, value: string | number | boolean): Promise<void> {
+    const allowed: Record<string, "language" | "promptArrowKeys" | "messageTimestamps" | "maxAttachMB"> = {
+      language: "language",
+      promptArrowKeys: "promptArrowKeys",
+      messageTimestamps: "messageTimestamps",
+      maxAttachMB: "maxAttachMB",
+    };
+    const setting = allowed[key];
+    if (!setting) {
+      this.postSettingsError(`unknown setting: ${key}`);
+      return;
+    }
+    try {
+      await vscode.workspace.getConfiguration("dshVsc").update(setting, value, vscode.ConfigurationTarget.Global);
+      this.log(`setting ${setting} = ${String(value)}`);
+      // Push the value the panel acts on directly, not just via `state`: the
+      // arrow mode is consumed in a keydown handler and must not lag a frame.
+      this.post({
+        type: "config",
+        promptArrowKeys: this.promptArrowMode(),
+        maxAttachBytes: this.maxAttachBytes() ?? null,
+        messageTimestamps: this.timestampsEnabled(),
+      });
+      this.postExtensionSettings();
+      this.postSettingsSaved(t("已保存"));
+      // A language change re-renders the sidebar through the config listener in
+      // extension.ts; a setting that the panel consumes in its state needs a
+      // fresh state frame so the change is live without a reload.
+      this.postState();
+    } catch (error) {
+      this.postSettingsError(describeHarnessFailure(t("保存失败"), error));
+    }
+  }
+
   private async onSettingsMessage(msg: Record<string, unknown>): Promise<void> {
+    // Extension knobs are local: they must work even when the harness is down.
+    if (msg.type === "settingsReady") {
+      this.postExtensionSettings();
+    } else if (msg.type === "setExtensionSetting") {
+      await this.setExtensionSetting(String(msg.key ?? ""), msg.value as string | number | boolean);
+      return;
+    }
     if (!this.client) {
-      this.postSettingsError("harness 未连接");
+      this.postSettingsError(t("harness 未连接"));
       return;
     }
     switch (msg.type) {
       case "settingsReady":
+        // Extension knobs first: they must render even when the harness is
+        // reachable-but-slow, and they are the first thing a lost user needs.
         await this.postSettingsData();
         await this.postSettingsPresets();
         break;
@@ -1463,10 +1761,10 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
             ),
             expectedRevision
           );
-          this.postSettingsSaved("已保存");
+          this.postSettingsSaved(t("已保存"));
           await this.postSettingsData();
         } catch (error) {
-          this.postSettingsError(describeHarnessFailure("保存失败", error));
+          this.postSettingsError(describeHarnessFailure(t("保存失败"), error));
         }
         break;
       }
@@ -1479,7 +1777,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       const value = await this.client.settingsDescribe();
       this.settingsPanel?.webview.postMessage({ type: "settingsData", value });
     } catch (error) {
-      this.postSettingsError(describeHarnessFailure("读取配置失败", error));
+      this.postSettingsError(describeHarnessFailure(t("读取配置失败"), error));
     }
   }
 
@@ -1489,7 +1787,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       const value = await this.client.agentPresets();
       this.settingsPanel?.webview.postMessage({ type: "settingsAgentPresets", value });
     } catch (error) {
-      this.postSettingsError(describeHarnessFailure("读取预设失败", error));
+      this.postSettingsError(describeHarnessFailure(t("读取预设失败"), error));
     }
   }
 

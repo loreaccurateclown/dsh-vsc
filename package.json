@@ -96,6 +96,14 @@
       {
         "command": "dsh.reviewChanges",
         "title": "DSH: Review Agent Changes"
+      },
+      {
+        "command": "dsh.quitForPanel",
+        "title": "DSH: Quit VS Code (panel recovery)"
+      },
+      {
+        "command": "dsh.panelRecoveryInfo",
+        "title": "DSH: Panel Recovery (quit & reopen)"
       }
     ],
     "menus": {
@@ -133,16 +141,55 @@
           "type": "string",
           "default": "",
           "description": "Since DSH 0.2.1, every /api call and event stream requires a cookie exchanged for the token printed by `dsh web` at launch. A harness this extension starts itself reads the token from its launch output, so nothing needs filling in; only when you started `dsh web` manually (or connect to an instance inside WSL) do you paste that token=… URL or the token itself here. The token changes on every launch."
+        },
+        "dshVsc.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "zh"
+          ],
+          "enumDescriptions": [
+            "Follow VS Code's display language",
+            "English",
+            "中文 (upstream's original strings)"
+          ],
+          "default": "auto",
+          "description": "Language of this extension's own UI: panel, settings tab, status bar, and the notifications and errors the host raises. `zh` renders upstream's strings untouched. The harness's own output (agent replies, tool output) is not translated. Changing it rebuilds the panel, which reloads its state."
+        },
+        "dshVsc.maxAttachMB": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "description": "Upper size limit in MB for anything this extension reads for you: images referenced by path, images pasted from the clipboard, and files dropped onto the panel. 0 disables the limit (you know what you are doing). This is a transport guard — the harness enforces its own admission limits on images, and stores generic files verbatim regardless."
+        },
+        "dshVsc.promptArrowKeys": {
+          "type": "string",
+          "enum": [
+            "history",
+            "caret"
+          ],
+          "enumDescriptions": [
+            "Up/Down walk the prompt history, like a terminal (default)",
+            "Up/Down move the caret inside the prompt, like a text editor"
+          ],
+          "default": "history",
+          "description": "What the Up/Down arrows do in the composer. history keeps the terminal behaviour this panel shipped with; caret gives the arrows back to the text, so the caret can move through a multi-line draft."
+        },
+        "dshVsc.messageTimestamps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show wall-clock times in the transcript: every user message, and each turn (“Round N · HH:MM”) for the agent side. Times come from the session log’s own event timestamps, so history replays identically."
         }
       }
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "node esbuild.js",
+    "gen:i18n": "node scripts/gen-i18n-tables.mjs",
+    "build": "npm run gen:i18n && node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "i18n": "node scripts/apply-i18n.mjs",
-    "package": "node esbuild.js && node scripts/apply-i18n.mjs && vsce package --no-dependencies"
+    "package": "npm run gen:i18n && node esbuild.js && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

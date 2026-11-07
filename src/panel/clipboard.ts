@@ -14,10 +14,16 @@
  * & drop keeps working, so an unavailable clipboard never blocks attaching.
  */
 import { spawn } from "node:child_process";
+import { createReadStream, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export type ClipboardImage =
   | { ok: true; mediaType: string; data: string }
   | { ok: false; error: string };
+
+/** Result of putting something on the clipboard. */
+export type ClipboardWrite = { ok: true } | { ok: false; error: string };
 
 interface RunResult {
   code: number;
@@ -25,13 +31,21 @@ interface RunResult {
   stderr: string;
 }
 
-/** Run one command, capturing binary stdout; resolves (never rejects). */
-function run(cmd: string, args: string[], timeoutMs = 8000): Promise<RunResult> {
+/** Run one command, capturing binary stdout; resolves (never rejects).
+ *  `stdinFile` feeds a file to the child's stdin (used by `wl-copy`). */
+function run(cmd: string, args: string[], timeoutMs = 8000, stdinFile?: string): Promise<RunResult> {
   return new Promise((resolve) => {
     let settled = false;
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     const child = spawn(cmd, args, { windowsHide: true });
+    if (stdinFile) {
+      try {
+        child.stdin?.end(createReadStream(stdinFile));
+      } catch {
+        child.stdin?.end();
+      }
+    }
     const finish = (code: number, stderr?: string): void => {
       if (settled) return;
       settled = true;
@@ -58,18 +72,70 @@ function run(cmd: string, args: string[], timeoutMs = 8000): Promise<RunResult> 
 }
 
 /**
- * GetImage() returns a Bitmap; saving it as PNG keeps the payload small and
- * gives the panel a media type it already knows how to render.
+ * Read the clipboard image, then read it once more after a short pause.
+ *
+ * Apps that put a large image on the clipboard usually do it with *delayed
+ * rendering*: the clipboard advertises a format and renders the bytes only when
+ * a reader asks. That arrived here as "paste grabbed the previous image, try it
+ * again" — the first `GetImage()` was answered by the previous owner's data.
+ * Sampling twice (and a third time if the second was empty) returns what is
+ * actually on the clipboard; it costs ~150 ms inside this process, with no extra
+ * spawn, and paste is not latency-critical the way copy is.
  */
 const WINDOWS_SCRIPT = [
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
   "$img = [System.Windows.Forms.Clipboard]::GetImage()",
+  "Start-Sleep -Milliseconds 150",
+  "$later = [System.Windows.Forms.Clipboard]::GetImage()",
+  "if ($null -eq $later) { Start-Sleep -Milliseconds 150; $later = [System.Windows.Forms.Clipboard]::GetImage() }",
+  "if ($null -ne $later) { $img = $later }",
   "if ($null -eq $img) { exit 3 }",
   "$ms = New-Object System.IO.MemoryStream",
   "$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)",
   "[Console]::Out.Write([Convert]::ToBase64String($ms.ToArray()))",
 ].join("; ");
+
+/**
+ * Windows clipboard writer, run as a script file because it is too long for a
+ * command line and needs real control flow:
+ *   exit 3 — the bytes could not be decoded by GDI+ or WIC
+ *   exit 4 — the clipboard stayed locked by another process after retries
+ * The retry loop is the fix for "copy it again and it works": `OpenClipboard`
+ * fails whenever another app holds the clipboard, which is intermittent.
+ */
+const WINDOWS_SET_IMAGE_SCRIPT = [
+  "param([string]$Path)",
+  "$ErrorActionPreference = 'Stop'",
+  "Add-Type -AssemblyName System.Windows.Forms",
+  "Add-Type -AssemblyName System.Drawing",
+  "function Load-Image([string]$p) {",
+  "  try { return [System.Drawing.Image]::FromFile($p) } catch { }",
+  "  # WIC decodes formats GDI+ refuses (WebP is a common DSH attachment).",
+  "  Add-Type -AssemblyName PresentationCore",
+  "  $uri = New-Object System.Uri($p)",
+  "  $dec = [System.Windows.Media.Imaging.BitmapDecoder]::Create($uri, 'None', 'OnLoad')",
+  "  $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder",
+  "  $enc.Frames.Add($dec.Frames[0])",
+  "  $ms = New-Object System.IO.MemoryStream",
+  "  $enc.Save($ms)",
+  "  $ms.Position = 0",
+  "  return [System.Drawing.Image]::FromStream($ms)",
+  "}",
+  "$img = $null",
+  "try { $img = Load-Image $Path } catch { exit 3 }",
+  "if ($null -eq $img) { exit 3 }",
+  "$ok = $false",
+  "for ($i = 0; $i -lt 20 -and -not $ok; $i++) {",
+  "  try { [System.Windows.Forms.Clipboard]::SetImage($img); $ok = $true }",
+  "  catch { Start-Sleep -Milliseconds 75 }",
+  "}",
+  "$img.Dispose()",
+  "if (-not $ok) { exit 4 }",
+  "# Prove it: a stale or empty clipboard means the copy did not land.",
+  "if ($null -eq [System.Windows.Forms.Clipboard]::GetImage()) { exit 5 }",
+  "exit 0",
+].join("\n");
 
 /** `public.png` is the only representation JXA can hand back without conversion. */
 const DARWIN_SCRIPT = [
@@ -120,4 +186,73 @@ export async function readClipboardImage(): Promise<ClipboardImage> {
   }
 
   return { ok: false, error: `clipboard image reading is not supported on ${process.platform}` };
+}
+
+/**
+ * Put an image on the OS clipboard.
+ *
+ * `vscode.env.clipboard` writes text only, and a webview `copy` event carries
+ * text too — which is why the native right-click "Copy" never copies image
+ * bytes. Each platform gets the real thing through its own tooling; the bytes
+ * go through a temp file because every one of these tools wants a file or a
+ * pipe, not an argument (base64 of a render easily exceeds the command line).
+ */
+export async function writeClipboardImage(mediaType: string, base64: string): Promise<ClipboardWrite> {
+  if (!base64) return { ok: false, error: "the image has no bytes" };
+  const ext = mediaType === "image/jpeg" ? ".jpg" : mediaType === "image/webp" ? ".webp" : mediaType === "image/gif" ? ".gif" : ".png";
+  const dir = mkdtempSync(join(tmpdir(), "dsh-vsc-copy-"));
+  const file = join(dir, `image${ext}`);
+  try {
+    writeFileSync(file, Buffer.from(base64, "base64"));
+
+    if (process.platform === "win32") {
+      // Two intermittent failure modes, both of which look like "copy twice":
+      //  * `OpenClipboard` fails while another process holds the clipboard
+      //    (0x800401D0) — retried inside the script;
+      //  * GDI+ cannot decode WebP, and DSH attachments are frequently WebP —
+      //    transcoded through WIC when `Image::FromFile` throws.
+      const scriptPath = join(dir, "set-image.ps1");
+      writeFileSync(scriptPath, WINDOWS_SET_IMAGE_SCRIPT, "utf8");
+      const result = await run("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-STA",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        scriptPath,
+        file,
+      ]);
+      if (result.code === 3) return { ok: false, error: "the image could not be decoded (unsupported format)" };
+      if (result.code === 4) return { ok: false, error: "the clipboard stayed locked by another process" };
+      if (result.code !== 0) {
+        const detail = result.stderr.trim();
+        return { ok: false, error: `could not write the clipboard${detail ? `: ${detail}` : " (PowerShell blocked?)"}` };
+      }
+      return { ok: true };
+    }
+
+    if (process.platform === "darwin") {
+      const script = `set the clipboard to (read (POSIX file "${file.replace(/"/g, '\\"')}") as «class PNGf»)`;
+      const result = await run("osascript", ["-e", script]);
+      if (result.code !== 0) return { ok: false, error: `could not write the clipboard: ${result.stderr.trim()}` };
+      return { ok: true };
+    }
+
+    if (process.platform === "linux") {
+      const wayland = await run("wl-copy", ["--type", "image/png"], 8000, file);
+      if (wayland.code === 0) return { ok: true };
+      const x11 = await run("xclip", ["-selection", "clipboard", "-t", "image/png", "-i", file]);
+      if (x11.code === 0) return { ok: true };
+      return { ok: false, error: "could not write the clipboard (wl-copy and xclip both failed)" };
+    }
+
+    return { ok: false, error: `copying images is not supported on ${process.platform}` };
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* a leftover temp file is not worth reporting */
+    }
+  }
 }

@@ -6,7 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-- _(nothing yet)_
+### Added
+
+- **Togglable English UI, at runtime.** The zh→en tables in `i18n/maps/` are compiled by `scripts/gen-i18n-tables.mjs` into a module the extension loads, so webview templates are translated as they load and host strings go through `t()` — no build step rewrites upstream's artifacts any more. `dshVsc.language` = `auto` / `en` / `zh`; `zh` renders upstream's exact strings, and a missing entry falls back to Chinese instead of breaking. Messages with values use `tf("已打开 {0} 个 diff。", n)` so each language keeps its own word order.
+- **Extension settings inside the panel.** The settings tab's General page now opens with an *Extension Settings* card (language, arrow keys, attachment cap, timestamps) wired to VS Code config. These rows work before the harness is reachable, because they are local to the extension.
+- **Transcript timestamps** (`dshVsc.messageTimestamps`, default on): every user message shows `HH:MM ZONE`, each turn shows its start in the separator, and the completion strip shows when the round ended. All from the log's own event times, so history replays identically.
+- **Composer arrow modes** (`dshVsc.promptArrowKeys`): `history` keeps the terminal behaviour (Up/Down walk previous prompts); `caret` gives the arrows back to the text.
+- **Attachment size cap** (`dshVsc.maxAttachMB`, default 50, `0` disables): applied to path reads, clipboard images, dropped/pasted files and inline `data:` images.
+- **Copy image** from the transcript: right-click → *Copy image* writes real bytes via PowerShell `SetImage`, JXA `NSPasteboard`, or `wl-copy`/`xclip`. VS Code's own Copy can only copy the text selection, so that menu is replaced on images.
+- **Inline previews for `read_image`.** Tool results carry image blocks beside their text envelope; the panel now renders them as their own transcript row (fetched over `session.attachment`), so a preview is visible without expanding the tool card.
+- **Panel watchdog.** The panel posts a `panelReady` handshake at load; if it never arrives the status bar flips to *panel did not load — restart VS Code* and a notification explains why, with a one-click **Quit VS Code**. When a shutdown marker shows this instance started soon after the previous one, the message says how soon — the known trigger, in numbers.
+- Visible feedback for asynchronous clipboard work: `Copying image…` → `✓ Image copied` / `✗ Copy failed: <reason>`.
+
+### Changed
+
+- `npm run package` is now `gen:i18n` → `esbuild` → `vsce`; `scripts/apply-i18n.mjs` is retired.
+- Injected `dsh-time-context` readings are folded into a single muted chip (hover for the full text, click to expand) instead of three lines per reading.
+- Local link and image handling is whitelist-based: only `http(s)`/`mailto` reach the shell, everything else resolves as a file and opens in the editor.
+
+### Fixed
+
+- **Inline images that failed with Windows error `0x2`.** Relative paths (`renders/x.png`) were classified as links and handed to `ShellExecute`, which read `renders` as a URI scheme. They now resolve against the **session's DSH workspace first**, then the editor's folders, then the host cwd; a genuinely missing image degrades to a muted `[图片]` whose tooltip carries the path and reason.
+- **Every tool card lost its result.** A `tool/result` message carries its blocks directly (no `tool-result` wrapper), so the result text — and `read_image`'s image — was discarded. Both shapes are accepted now, and parallel calls pair results by `callId` instead of "the most recent call".
+- **Code-block copy buttons stayed Chinese.** The inlined renderer bundle was built with esbuild's default `ascii` charset, which escaped CJK to `\uXXXX`; literal translation could never match it. The bundle is emitted as UTF-8 now.
+- **Copy image needed two attempts.** The writer retries when another process holds the clipboard, transcodes WebP (which GDI+ cannot decode) through WIC, and reports a definite outcome.
+- **Pasting picked up the previous clipboard.** Windows reads now sample the clipboard twice ~150 ms apart, which defeats delayed rendering by the source application.
+- A malformed i18n entry (`Copy中…` as a key) and a missing `复制代码` entry that rendered the tooltip as `Copy代码`.
+
+### Known issues
+
+- **`Could not register service worker: InvalidStateError`** can leave the panel blank for the lifetime of a VS Code process. A relaunch within ~15 s of quitting triggers it (measured: ~8–10 s failed, ~16 s worked). *Reload Window* does not clear it, and deferring the first paint or hiding the view does not prevent it — the first registration is attempted when VS Code creates the webview host, before extension code runs. Quit, wait ten or so seconds, reopen; the extension detects the dead panel and offers exactly that.
 
 ## [0.3.14] - 2026-10-29
 

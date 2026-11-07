@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { execFile } from "node:child_process";
+import { t } from "../i18n";
 
 /** Snapshot of what the user is looking at, for context injection. */
 export interface EditorContext {
@@ -40,7 +41,7 @@ export async function currentEditorContext(): Promise<EditorContext> {
 /** Format the snapshot as a compact, agent-readable context block. */
 export function formatEditorContext(ctx: EditorContext, maxChars = 4000): string {
   const lines: string[] = [];
-  lines.push("[VS Code 编辑器上下文]");
+  lines.push(t("[VS Code 编辑器上下文]"));
   if (ctx.file) lines.push(`文件: ${ctx.file}`);
   if (ctx.language) lines.push(`语言: ${ctx.language}`);
   if (ctx.selection) lines.push(`选区: 第 ${ctx.selection.startLine}-${ctx.selection.endLine} 行`);
@@ -53,7 +54,7 @@ export function formatEditorContext(ctx: EditorContext, maxChars = 4000): string
     }
     lines.push(text);
   } else if (ctx.file) {
-    lines.push("（无选区，仅文件上下文）");
+    lines.push(t("（无选区，仅文件上下文）"));
   }
   return lines.join("\n");
 }

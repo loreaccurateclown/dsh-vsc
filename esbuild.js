@@ -25,6 +25,13 @@ async function injectRenderer() {
     platform: "browser",
     format: "iife",
     target: ["es2020", "chrome120"],
+    // `ascii` (the default) escapes CJK to \uXXXX; the bundle is inlined into
+    // panel.html and translated by literal matching, which cannot see escapes.
+    charset: "utf8",
+    // Keep CJK literal: the bundle is inlined into panel.html and translated at
+    // load by literal matching; esbuild's default `ascii` charset escapes it to
+    // \uXXXX, which no literal pass can match (the code-block copy buttons that
+    // stayed Chinese were exactly this).
     minify: true,
     write: false,
     logLevel: "info",
@@ -77,6 +84,13 @@ async function main() {
         platform: "browser",
         format: "iife",
         target: ["es2020", "chrome120"],
+    // `ascii` (the default) escapes CJK to \uXXXX; the bundle is inlined into
+    // panel.html and translated by literal matching, which cannot see escapes.
+    charset: "utf8",
+    // Keep CJK literal: the bundle is inlined into panel.html and translated at
+    // load by literal matching; esbuild's default `ascii` charset escapes it to
+    // \uXXXX, which no literal pass can match (the code-block copy buttons that
+    // stayed Chinese were exactly this).
         minify: true,
         write: false,
         logLevel: "info",

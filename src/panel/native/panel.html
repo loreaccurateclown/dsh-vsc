@@ -130,10 +130,14 @@
   .u-image { position: relative; border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
              background: var(--input-bg); cursor: zoom-in; }
   .u-image img { display: block; max-width: 220px; max-height: 160px; object-fit: contain; }
+  /* Inline preview row for image-bearing tool results (read_image). A plain
+     transcript row, deliberately outside the tool card and its Actions bundle,
+     so a collapsed group can never hide the image. */
+  .inline-images { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start; margin: 2px 0 10px; }
+  .inline-images .u-image img { max-width: 320px; max-height: 260px; }
   .u-image-ph { width: 120px; height: 68px; display: flex; align-items: center; justify-content: center;
                 color: var(--muted); font-size: 11px; }
-  .u-image-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 4px; font-size: 10px;
-                 color: var(--muted); background: rgba(0,0,0,.45); overflow: hidden; text-overflow: ellipsis;
+  .u-image-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 4px; font-size: 10px;                 color: var(--muted); background: rgba(0,0,0,.45); overflow: hidden; text-overflow: ellipsis;
                  white-space: nowrap; }
   .msg .body pre { margin: 4px 0; padding: 6px 8px; background: var(--input-bg); border-radius: 3px;
     white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
@@ -217,8 +221,44 @@
     margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
   .body img.md-img:not([src]) { width: 180px; height: 100px; }
   .body input[type="checkbox"] { vertical-align: middle; margin: 0 4px 0 0; }
+  /* Wall-clock time on a user message (see dshVsc.messageTimestamps). */
+  .msg-time { font-size: 11px; color: var(--muted); align-self: center; margin-right: 2px; }
+  /* Completion time appended to the bottom-of-turn summary. */
+  .turn-end-time { margin-left: 8px; font-size: 11px; color: var(--muted); }
 
-  /* block-level copy buttons (markdown code blocks + tool args/result) */
+  /* Injected time-context readings (dsh-time-context): three lines of harness
+     text per occurrence. The panel keeps the information but folds it into one
+     muted chip; the full text stays in the tooltip and on click. */
+  .ctx-note { display: inline-block; font-size: 11px; line-height: 1.6; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 9px; padding: 0 8px; margin: 2px 0;
+    cursor: pointer; user-select: none; }
+  .ctx-note:hover { color: var(--fg); border-color: var(--accent); }
+  .ctx-note-full { font-size: 11px; line-height: 1.45; color: var(--muted); white-space: pre-wrap;
+    border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
+
+  /* Image context menu. The webview's native menu copies the *selection* as
+     text, so it can never put image bytes on the clipboard — this menu exists
+     because that command cannot work. */
+  .ctx-menu { position: fixed; z-index: 40; min-width: 136px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); font-size: 12px; }
+  .ctx-menu button { display: block; width: 100%; text-align: left; padding: 4px 8px;
+    background: transparent; border: none; color: var(--fg); cursor: pointer; border-radius: 4px; }
+  .ctx-menu button:hover { background: var(--hover); }
+
+  /* Transient toast: clipboard work is asynchronous (a PowerShell round-trip),
+     so the UI states "copying…" immediately and resolves to ✓/✗ when it lands.
+     It sits on its own row ABOVE the composer, never over the text you type,
+     and is deliberately louder than a status hint. */
+  #toast-row { padding: 0 8px 6px; }
+  #toast-row[hidden] { display: none; }
+  /* Same shape and height as the composer box; the colour lives in the text,
+     not the fill, so it reads as part of the composer rather than an alert. */
+  .toast { display: inline-flex; align-items: center; height: 34px; padding: 0 12px;
+    font-size: 14px; font-weight: 600; border-radius: 8px;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--accent); }
+  .toast.bad { color: #ff8a80; border-color: rgba(217, 83, 79, 0.65); }
   pre.md-code { position: relative; padding-right: 56px; }
   .block-copy { position: absolute; top: 4px; right: 4px; z-index: 5;
                 background: var(--input-bg); color: var(--muted); border: 1px solid var(--border);
@@ -467,6 +507,7 @@
       </div>
     </section>
     <section id="interact-card" hidden></section>
+    <div id="toast-row" hidden></div>
     <div id="input-row">
       <textarea id="input" rows="1" placeholder="发消息…（Enter 发送，运行中自动排队；Shift+Enter 换行；Ctrl+V 粘图片）"></textarea>
       <div id="composer-btns">
@@ -536,7 +577,34 @@
   };
 
   function post(msg) { try { vscode.postMessage(msg); } catch (e) {} }
+  // Liveness handshake: the host waits for this after every load and reloads
+  // the webview if it never arrives (VS Code's service-worker registration bug
+  // leaves a dead iframe with no other symptom).
+  post({ type: "panelReady" });
   function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  /** Wall-clock HH:MM for a timestamp the log already carries (`ev.time`).
+   *  `withZone` appends the local short zone name (EST/EDT, CET…), which Intl
+   *  resolves DST-correctly; it degrades to a plain HH:MM if the locale
+   *  reports only an offset like GMT-5. */
+  function fmtClock(ts, withZone) {
+    if (typeof ts !== "number") return "";
+    var d = new Date(ts);
+    var p = function (n) { return n < 10 ? "0" + n : String(n); };
+    var text = p(d.getHours()) + ":" + p(d.getMinutes());
+    if (!withZone) return text;
+    try {
+      var parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(d);
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].type === "timeZoneName" && /^[A-Za-z]{3,5}$/.test(parts[i].value)) {
+          return text + " " + parts[i].value.toUpperCase();
+        }
+      }
+    } catch (e) {
+      /* older engines: keep the bare time */
+    }
+    return text;
+  }
+
   function relTime(ts) {
     if (!ts) return "";
     var diff = Date.now() - ts;
@@ -560,6 +628,134 @@
     } catch (e) {}
     return esc(text);
   }
+
+  /* ---------- injected time-context readings ----------
+     `@deepseek-ai/dsh-time-context` appends a durable user/message with three
+     lines (turn/step stamp, browser zone, elapsed). It is harness content, so
+     the panel cannot make it shorter at the source — it folds it into one chip
+     instead, keeping the reading one hover or click away. */
+  function temporalContextOf(text) {
+    if (typeof text !== "string" || text.indexOf("Time sampled while preparing turn ") !== 0) return null;
+    var head = /^Time sampled while preparing turn (\d+), step (\d+): ([^\n]*)/.exec(text);
+    if (!head) return null;
+    var zone = /Browser time zone for this request: ([^\n]*)/.exec(text);
+    var elapsed = /Elapsed since the preceding [^:]*: ([^\n]*)/.exec(text);
+    var clock = /T(\d{2}:\d{2}:\d{2})/.exec(head[3]);
+    return {
+      turn: head[1],
+      step: head[2],
+      clock: clock ? clock[1] : head[3].trim(),
+      zone: zone ? zone[1].replace(/\.$/, "") : "",
+      elapsed: elapsed ? elapsed[1].replace(/\.$/, "").trim() : "",
+      full: text,
+    };
+  }
+
+  /** One muted chip per reading; click reveals the verbatim text. */
+  function temporalChipEl(ctx) {
+    var chip = document.createElement("span");
+    chip.className = "ctx-note";
+    var elapsed = ctx.elapsed && ctx.elapsed !== "unavailable" ? "+" + ctx.elapsed : "—";
+    chip.textContent = "⏱ " + ctx.clock + " · " + elapsed;
+    chip.title = ctx.full;
+    var expanded = false;
+    chip.onclick = function () {
+      expanded = !expanded;
+      var next = chip.nextSibling;
+      if (expanded) {
+        var full = document.createElement("div");
+        full.className = "ctx-note-full";
+        full.textContent = ctx.full;
+        chip.parentNode.insertBefore(full, next);
+      } else if (next && next.className === "ctx-note-full") {
+        next.parentNode.removeChild(next);
+      }
+    };
+    return chip;
+  }
+
+  /* ---------- image context menu: Copy image ----------
+     VS Code's webview menu offers Cut/Copy/Paste, and Copy copies the DOM
+     selection as text — an image has no text to copy, so the command silently
+     does nothing. Replacing the menu on images is the only way to copy bytes. */
+  var imgMenu = null;
+
+  /** One transient toast at a time, on its own row above the composer.
+   *  `ms = 0` keeps it until replaced — but never forever: a lost reply must not
+   *  leave a permanent "copying…" on screen (that happened once, with a stale
+   *  host that still answered the retired `copied` message). */
+  var activeToast = null;
+  function toast(text, ms, bad) {
+    var row = $("toast-row");
+    if (!row) return null;
+    if (activeToast && activeToast.parentNode) activeToast.parentNode.removeChild(activeToast);
+    var el = document.createElement("div");
+    el.className = "toast" + (bad ? " bad" : "");
+    el.textContent = text;
+    row.appendChild(el);
+    row.hidden = false;
+    activeToast = el;
+    var drop = function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+      if (activeToast === el) activeToast = null;
+      if (row && !row.children.length) row.hidden = true;
+    };
+    setTimeout(drop, ms || 6000);
+    return el;
+  }
+
+  function hideImgMenu() {
+    if (imgMenu && imgMenu.parentNode) imgMenu.parentNode.removeChild(imgMenu);
+    imgMenu = null;
+  }
+
+  function showImgMenu(x, y, img) {
+    hideImgMenu();
+    var menu = document.createElement("div");
+    menu.className = "ctx-menu";
+    var copy = document.createElement("button");
+    copy.textContent = "Copy image";
+    copy.onclick = function () {
+      hideImgMenu();
+      var src = img.getAttribute("src") || "";
+      var m = /^data:([^;,]+);base64,(.*)$/.exec(src);
+      if (!m) {
+        // Not hydrated yet (still `data-local-src`): start the read and finish
+        // the copy when the bytes land, instead of making the user click twice.
+        var localSrc = img.getAttribute("data-local-src");
+        if (localSrc) {
+          img.__copyPending = true;
+          toast("Preparing image…", 0);
+          post({ type: "readImage", requestId: ++clipboardRequestSeq, path: localSrc });
+        } else {
+          toast("This image has not loaded yet", 2200, true);
+        }
+        return;
+      }
+      // The write is a PowerShell round-trip (~0.2 s): say so immediately so
+      // the state is never ambiguous while the clipboard catches up.
+      toast("Copying image…", 0);
+      post({ type: "copyImage", mediaType: m[1], data: m[2] });
+    };
+    menu.appendChild(copy);
+    document.body.appendChild(menu);
+    menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 8) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + "px";
+    imgMenu = menu;
+  }
+
+  document.addEventListener("contextmenu", function (ev) {
+    var img = ev.target && ev.target.closest ? ev.target.closest("img.md-img") : null;
+    if (!img) return;
+    ev.preventDefault();
+    showImgMenu(ev.clientX, ev.clientY, img);
+  });
+  document.addEventListener("mousedown", function (ev) {
+    if (imgMenu && !imgMenu.contains(ev.target)) hideImgMenu();
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") hideImgMenu();
+  });
 
   /* ---------- local images referenced by path ----------
      The assistant links files like `![alt](D:\out\shot.png)`. A webview can
@@ -626,6 +822,35 @@
     });
     var s = parts.join("\n").trim();
     return s.length > 1500 ? s.slice(0, 1500) + "\n…（截断）" : s;
+  }
+
+  /** Empty unless the result carries image blocks — `read_image` does, beside its
+   *  text envelope. The refs are enough: `imageCell` fetches the bytes itself. */
+  function resultImageRefs(block) {
+    return (block && Array.isArray(block.content) ? block.content : [])
+      .filter(function (b) { return b && b.type === "image" && b.attachment; })
+      .map(function (b) {
+        return {
+          attachmentId: String(b.attachment.attachmentId),
+          mediaType: b.attachment.mediaType,
+          width: b.attachment.width,
+          height: b.attachment.height,
+          name: b.attachment.name || "",
+        };
+      });
+  }
+
+  /** A `tool/result` message carries its blocks directly:
+   *    {role:"tool", toolCallId, content:[{type:"text"}, {type:"image",…}], isError}
+   *  Older/other shapes wrap them in a `{type:"tool-result"}` block. Both are
+   *  accepted — reading only the wrapper is why every tool card lost its result
+   *  (and read_image lost its preview). */
+  function toolResultBlock(msg) {
+    var wrapped = null;
+    (msg.content || []).forEach(function (b) { if (b && b.type === "tool-result") wrapped = b; });
+    if (wrapped) return wrapped;
+    if (!Array.isArray(msg.content)) return null;
+    return { content: msg.content, isError: msg.isError === true, toolCallId: msg.toolCallId };
   }
 
   /* ---------- fold: events -> render items ---------- */
@@ -729,8 +954,10 @@
             if (u) pend.text = u;
             if (imgs.length) pend.images = mergeImageRefs(pend.images, imgs);
             pend.pending = false; pend.turn = d.turn; pend.version = (pend.version || 0) + 1;
+            if (typeof ev.time === "number") pend.time = ev.time;
           } else {
             state.items.push({ kind: "user", text: u, turn: d.turn,
+                               time: typeof ev.time === "number" ? ev.time : undefined,
                                images: imgs.length ? imgs : undefined });
           }
         }
@@ -782,14 +1009,24 @@
       }
       case "tool/result": {
         var msg = d.message || {};
-        var block = null;
-        (msg.content || []).forEach(function (b) { if (b && b.type === "tool-result") block = b; });
+        var block = toolResultBlock(msg);
         var callId = (block && block.toolCallId) || d.callId;
         var tool = findTool(callId);
         if (tool) {
           tool.status = block && block.isError ? "error" : "ok";
           tool.resultText = summarizeResult(block && block.content);
           tool.version = (tool.version || 0) + 1;
+        }
+        // A result that carries images (read_image) gets its own transcript row
+        // instead of living inside the tool card: the preview then survives a
+        // collapsed Actions bundle and costs no tool-metadata space.
+        var liveImages = resultImageRefs(block);
+        if (liveImages.length) {
+          state.items.push({
+            kind: "inline-images",
+            images: liveImages,
+            turn: typeof d.turn === "number" ? d.turn : state.lastTurn,
+          });
         }
         if (state.activeRound && state.activeRound.kind === "tool" && state.activeRound.callId === String(callId)) {
           state.activeRound = null;
@@ -821,14 +1058,14 @@
             turnItem.elapsed = turnItem.startTime ? Math.max(0, turnItem.endTime - turnItem.startTime) : undefined;
             turnItem.totalDiff = aggregateTurnDiff(state.items, turnItem.turn);
             turnItem.version = (turnItem.version || 0) + 1;
-            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff };
+            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff, endTime: turnItem.endTime };
             break;
           }
         }
         // Bottom-of-turn summary strip: appears the moment the turn ends, so
         // the totals are right under the newest message (no scrolling up).
         if (endTurn) {
-          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff });
+          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff, endTime: endTurn.endTime });
           // The final render of this round must still happen even though the
           // turn-end makes everything frozen: rAF coalescing can delay the
           // last text-delta render past this boundary, and frozen would then
@@ -852,6 +1089,11 @@
   function olderItemsFrom(events) {
     var out = [];
     var curTool = null;
+    // Results can arrive out of order — a turn with parallel tool calls emits
+    // several tool/call events before any result — so pair them by callId.
+    // `curTool` alone silently dropped every parallel result, which is why
+    // "Actions · 3" cards showed no results (and read_image showed no preview).
+    var toolsByCall = {};
     events.forEach(function (ev) {
       if (!ev) return;
       var d = ev.data || {};
@@ -880,12 +1122,12 @@
               if (t.startTime) t.elapsed = Math.max(0, t.endTime - t.startTime);
               var total = aggregateTurnDiff(out, t.turn);
               t.totalDiff = total;
-              doneTurn = { turn: t.turn, elapsed: t.elapsed, totalDiff: total };
+              doneTurn = { turn: t.turn, elapsed: t.elapsed, totalDiff: total, endTime: t.endTime };
               break;
             }
           }
           if (doneTurn) {
-            out.push({ kind: "turn-end", turn: doneTurn.turn, elapsed: doneTurn.elapsed, totalDiff: doneTurn.totalDiff });
+            out.push({ kind: "turn-end", turn: doneTurn.turn, elapsed: doneTurn.elapsed, totalDiff: doneTurn.totalDiff, endTime: doneTurn.endTime });
           }
           break;
         }
@@ -894,6 +1136,7 @@
           var u = textBlocksOf(msg);
           var himgs = imageBlocksOf(msg);
           if (u || himgs.length) out.push({ kind: "user", text: u, turn: d.turn,
+                                            time: typeof ev.time === "number" ? ev.time : undefined,
                                             images: himgs.length ? himgs : undefined });
           break;
         }
@@ -907,16 +1150,26 @@
                       argsText: prettyArgs(d.arguments), status: "ok", resultText: "",
                       turn: typeof d.turn === "number" ? d.turn : 0,
                       diff: state.diffByCall[String(d.callId || "")] || null };
+          toolsByCall[curTool.callId] = curTool;
           out.push(curTool);
           break;
         case "tool/result": {
-          if (!curTool) break;
           var m = d.message || {};
-          var block = null;
-          (m.content || []).forEach(function (b) { if (b && b.type === "tool-result") block = b; });
-          curTool.status = block && block.isError ? "error" : "ok";
-          curTool.resultText = summarizeResult(block && block.content);
-          curTool = null;
+          var block = toolResultBlock(m);
+          var resultCallId = String((block && block.toolCallId) || d.callId || "");
+          var target = toolsByCall[resultCallId] || curTool;
+          if (!target) break;
+          target.status = block && block.isError ? "error" : "ok";
+          target.resultText = summarizeResult(block && block.content);
+          var histImages = resultImageRefs(block);
+          if (histImages.length) {
+            out.push({
+              kind: "inline-images",
+              images: histImages,
+              turn: typeof d.turn === "number" ? d.turn : target.turn,
+            });
+          }
+          if (curTool === target) curTool = null;
           break;
         }
       }
@@ -1624,6 +1877,8 @@
         // without scrolling back up. The running turn keeps the live clock
         // and the accumulated "+N-M" so far.
         var label = "— 第 " + item.turn + " 轮";
+        // Turn/round time for the agent side (user messages carry their own).
+        if (state.messageTimestamps && item.startTime) label += " · " + fmtClock(item.startTime, true);
         if (!item.done) {
           label += " · 进行中";
           if (item.startTime && state.running) {
@@ -1642,6 +1897,8 @@
         el.className = "turn-summary";
         var dur = (typeof item.elapsed === "number" && isFinite(item.elapsed)) ? fmtDur(item.elapsed) : "--";
         var s = "<span class='check'>✓</span><span>第 " + item.turn + " 轮完成 · 用时 " + dur + "</span>";
+        // When the round ended — the event carries it; `endTime` rides the item.
+        if (state.messageTimestamps && item.endTime) s += "<span class='turn-end-time'>" + fmtClock(item.endTime, true) + "</span>";
         var td = item.totalDiff;
         if (td && (td.added || td.deleted)) {
           s += diffChipHtml(td);
@@ -1705,13 +1962,22 @@
         } else {
           if (item.images && item.images.length) el.appendChild(userImagesEl(item.images));
           if (item.text) {
+            var ctx = temporalContextOf(item.text);
             var ub = document.createElement("div");
             ub.className = "body";
-            ub.innerHTML = renderMd(item.text);
+            if (ctx) ub.appendChild(temporalChipEl(ctx));
+            else ub.innerHTML = renderMd(item.text);
             el.appendChild(ub);
           }
           var ua = document.createElement("div");
           ua.className = "msg-actions";
+          // Every user message gets its time; the agent side uses the turn label.
+          if (state.messageTimestamps && item.time) {
+            var utime = document.createElement("span");
+            utime.className = "msg-time";
+            utime.textContent = fmtClock(item.time, true);
+            ua.appendChild(utime);
+          }
           if (item.turn === state.lastTurn && state.running) {
             var ed = document.createElement("button");
             ed.textContent = "✎ 编辑";
@@ -1812,6 +2078,13 @@
         el.appendChild(det);
         break;
       }
+      case "inline-images": {
+        // Preview row for image-bearing tool results (read_image). Always
+        // visible: no group, no <details>, no tool metadata.
+        el.className = "inline-images";
+        item.images.forEach(function (a) { el.appendChild(imageCell(a)); });
+        break;
+      }
       case "cmd": {
         el.className = item.err ? "sys-err" : "cmd-note";
         el.textContent = item.text;
@@ -1870,22 +2143,23 @@
   });
 
   /* ---------- markdown links: open externally (never navigate the webview) ---------- */
-  function isLocalTarget(href) {
-    return /^file:/i.test(href) || /^[A-Za-z]:[\\/]/.test(href) || /^\\\\/.test(href);
+  // Only real URLs may reach the shell. A relative path ("terrain/x.png") or a
+  // bare "C:\…" parses as a URI scheme and the launch dies with 0x2, so
+  // everything else is treated as a file the editor can open.
+  function isRemoteTarget(href) {
+    return /^(https?:\/\/|mailto:)/i.test(href);
   }
   messagesEl.addEventListener("click", function (ev) {
     var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
     if (!a) return;
     ev.preventDefault();
     var href = a.getAttribute("href") || "";
-    // A Windows path has no URL scheme, so Uri.parse("C:\…") reads "c" as one
-    // and the shell launch fails with "cannot find the file" (0x2). Local
-    // targets go to the editor; only real URLs reach the external handler.
-    if (isLocalTarget(href)) {
-      post({ type: "openFile", path: href });
+    if (!href || href.charAt(0) === "#") return;
+    if (isRemoteTarget(href)) {
+      post({ type: "openExternal", url: href });
       return;
     }
-    post({ type: "openExternal", url: href });
+    post({ type: "openFile", path: href });
   });
 
   /* ---------- block-level copy: one delegated listener for every
@@ -2005,6 +2279,14 @@
         state.connected = msg.connected;
         state.version = msg.version;
         state.phase = msg.phase || (msg.connected ? "online" : "offline");
+        // null = limit disabled; a number is the byte cap the host enforces too,
+        // so checking here only saves a pointless round-trip.
+        state.maxAttachBytes = msg.maxAttachBytes || 0;
+        // "history" (terminal) or "caret" (editor-style arrows).
+        state.promptArrowKeys = msg.promptArrowKeys === "caret" ? "caret" : "history";
+        state.messageTimestamps = msg.messageTimestamps !== false;
+        // Renderer-side cap for inline `data:` images (see src/panel/renderer.ts).
+        window.__DSH_MAX_DATA_URL__ = state.maxAttachBytes;
         state.sessions = msg.sessions || [];
     state.workspaces = msg.workspaces || [];
         state.activeSessionId = msg.activeSessionId;
@@ -2098,12 +2380,42 @@
         if (msg.data) {
           target.setAttribute("src", "data:" + (msg.mediaType || "image/png") + ";base64," + msg.data);
           target.removeAttribute("data-local-src");
+          // A copy asked for before the bytes existed: finish it now.
+          if (target.__copyPending) {
+            target.__copyPending = false;
+            var pm = /^data:([^;,]+);base64,(.*)$/.exec(target.getAttribute("src") || "");
+            if (pm) post({ type: "copyImage", mediaType: pm[1], data: pm[2] });
+          }
         } else {
+          // A muted placeholder, not a link: a failed read must never become a
+          // clickable target (the shell fails on non-URLs with 0x2). The path
+          // and the reason live in the tooltip.
           var fallback = document.createElement("span");
           fallback.className = "md-img-link";
-          fallback.textContent = "[图片读取失败] " + (msg.error || "");
+          fallback.textContent = "[图片]";
+          fallback.title = (target.getAttribute("data-local-src") || "") + " — " + (msg.error || "not readable");
           if (target.parentNode) target.parentNode.replaceChild(fallback, target);
         }
+        break;
+      }
+      case "config": {
+        // Targeted push (see NativePanelProvider.setExtensionSetting).
+        state.promptArrowKeys = msg.promptArrowKeys === "caret" ? "caret" : "history";
+        state.messageTimestamps = msg.messageTimestamps !== false;
+        state.maxAttachBytes = msg.maxAttachBytes || 0;
+        window.__DSH_MAX_DATA_URL__ = state.maxAttachBytes;
+        // Re-draw so a timestamps toggle applies without a reload.
+        scheduleRender();
+        break;
+      }
+      case "copied": // retired spelling: an older host may still answer with it
+      case "copyResult": {
+        // Clipboard work is asynchronous: "copying…" was shown on click, and
+        // this is the resolution. A single slot means one toast, never a stack.
+        var okCopy = msg.ok !== false;
+        // TEMP DIAGNOSTIC: proves the reply reaches the panel at all.
+        post({ type: "panelLog", text: "copyResult ok=" + okCopy + " msg=" + String(msg.message || "") });
+        toast((okCopy ? "✓ " : "✗ ") + (msg.message || ""), okCopy ? 2500 : 3000, !okCopy);
         break;
       }
       case "models": {
@@ -3390,7 +3702,10 @@
       }
       if (e.key === "Escape") { e.preventDefault(); hideMenu(); return; }
     }
-    if (e.key === "ArrowUp" && history.length > 0) {
+    // `history` (default) keeps terminal behaviour: Up/Down walk the prompt
+    // history. `caret` gives the arrows back to the textarea so they move the
+    // caret through a draft, as in any other editor.
+    if (e.key === "ArrowUp" && history.length > 0 && state.promptArrowKeys !== "caret") {
       e.preventDefault();
       if (historyIndex === -1) { historyDraft = inputEl.value; historyIndex = 0; }
       else historyIndex = Math.min(historyIndex + 1, history.length - 1);
@@ -3400,6 +3715,7 @@
       return;
     }
     if (e.key === "ArrowDown") {
+      if (state.promptArrowKeys === "caret") return; // caret mode: let the arrow move the caret
       if (historyIndex === -1) return; // not navigating yet — keep default caret behavior
       e.preventDefault();
       historyIndex--;
@@ -3645,6 +3961,7 @@
       if (it.kind === "file" && it.type && /^image\/(png|jpeg|webp|gif)$/.test(it.type)) {
         var file = it.getAsFile();
         if (!file) continue;
+        if (overAttachLimit(file.size)) { statusEl.textContent = attachTooLargeText(file.size); continue; }
         got = true;
         var reader = new FileReader();
         reader.onload = (function (f, mt) { return function () {
@@ -3703,11 +4020,22 @@
      never wins. Files that arrive as bytes are read in-page; paths are read by
      the extension host (`readImage` with `attach`). */
 
+  /** Reject an over-cap file before its bytes are read (and before they would
+   *  cross postMessage). 0/undefined means the limit is disabled. */
+  function overAttachLimit(size) {
+    return !!state.maxAttachBytes && size > state.maxAttachBytes;
+  }
+
+  function attachTooLargeText(size) {
+    return "Attachment too large: " + (size / 1024 / 1024).toFixed(1) + " MB";
+  }
+
   function attachFiles(files) {
     if (!files) return;
     for (var fi = 0; fi < files.length; fi++) {
       (function (file) {
         if (!file.type || !/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return;
+        if (overAttachLimit(file.size)) { statusEl.textContent = attachTooLargeText(file.size); return; }
         var reader = new FileReader();
         reader.onload = function () {
           var result = String(reader.result || "");
