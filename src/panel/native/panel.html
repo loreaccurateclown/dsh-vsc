@@ -2616,9 +2616,12 @@
       }
       var selfSegments = wsSegments[id] || [];
       var ancestorSegments = ancestorId === null ? [] : wsSegments[ancestorId] || [];
+      // Join with the convention the path itself uses: Windows workspace paths
+      // carry "\", POSIX ones "/". Never impose one platform's separator.
+      var separator = String(wsById[id].path || "").indexOf("\\") >= 0 ? "\\" : "/";
       wsLabelById[id] =
         ancestorId !== null && selfSegments.length > ancestorSegments.length
-          ? selfSegments.slice(ancestorSegments.length).join("\\")
+          ? selfSegments.slice(ancestorSegments.length).join(separator)
           : workspaceLabel(wsById[id]);
     });
     var labelCount = {};

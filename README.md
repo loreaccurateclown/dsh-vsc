@@ -75,11 +75,12 @@ renders one `<optgroup>` per workspace:
   its parent (`Programming` → `…\StrategyGamev1`). Rows keep their recency
   order inside a group;
 - a nested workspace is labelled by its path **relative to the nearest ancestor
-  workspace** (`JavaScript\StrategyGamev1`) and prefixed with a
-  non-breaking-space step — Chromium collapses ordinary leading spaces in an
-  `<optgroup label>`, which made plain indentation invisible. Root workspaces
-  keep their title (falling back to the folder's leaf name). Labels are built
-  from the real path segments, so **casing is preserved** — on Linux
+  workspace** (`JavaScript\StrategyGamev1`, joined with the separator the path
+  itself uses — `\` on Windows, `/` on POSIX — never an imposed one) and
+  prefixed with a non-breaking-space step — Chromium collapses ordinary leading
+  spaces in an `<optgroup label>`, which made plain indentation invisible. Root
+  workspaces keep their title (falling back to the folder's leaf name). Labels
+  are built from the real path segments, so **casing is preserved** — on Linux
   `JavaScript` and `javascript` are different directories;
 - the labels are derived from the workspace rows at render time: no filesystem
   access and no watchers. They are recomputed whenever the workspace baseline or
