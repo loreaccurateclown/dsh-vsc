@@ -109,6 +109,7 @@ const WINDOWS_SET_IMAGE_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   "Add-Type -AssemblyName System.Windows.Forms",
   "Add-Type -AssemblyName System.Drawing",
+  "Add-Type -Namespace Win32 -Name Clip -MemberDefinition '[DllImport(\"user32.dll\")] public static extern uint GetClipboardSequenceNumber();'",
   "function Load-Image([string]$p) {",
   "  try { return [System.Drawing.Image]::FromFile($p) } catch { }",
   "  # WIC decodes formats GDI+ refuses (WebP is a common DSH attachment).",
@@ -125,6 +126,11 @@ const WINDOWS_SET_IMAGE_SCRIPT = [
   "$img = $null",
   "try { $img = Load-Image $Path } catch { exit 3 }",
   "if ($null -eq $img) { exit 3 }",
+  // Windows bumps this on every clipboard update, so it answers "did our write
+  // land?" in O(1) — no read-back, no hashing a 25 MB image. Content comparison
+  // would be the only way to detect "same size, wrong image", and decoding a
+  // 25 MB bitmap per copy is exactly the cost we are avoiding.
+  "$before = [Win32.Clip]::GetClipboardSequenceNumber()",
   "$ok = $false",
   "for ($i = 0; $i -lt 20 -and -not $ok; $i++) {",
   "  try { [System.Windows.Forms.Clipboard]::SetImage($img); $ok = $true }",
@@ -132,8 +138,9 @@ const WINDOWS_SET_IMAGE_SCRIPT = [
   "}",
   "$img.Dispose()",
   "if (-not $ok) { exit 4 }",
-  "# Prove it: a stale or empty clipboard means the copy did not land.",
-  "if ($null -eq [System.Windows.Forms.Clipboard]::GetImage()) { exit 5 }",
+  // exit 5 = the clipboard never changed, i.e. the previous image survived.
+  "$after = [Win32.Clip]::GetClipboardSequenceNumber()",
+  "if ($after -eq $before) { exit 5 }",
   "exit 0",
 ].join("\n");
 
