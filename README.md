@@ -9,8 +9,6 @@
 
 > **Fork of [zhibailu/dsh-vsc](https://github.com/zhibailu/dsh-vsc)** at 0.3.14, deliberately compatible with it: same protocol, same wire shapes, same "pure bridge" contract (see [docs/design.md](docs/design.md)). This fork adds an **English UI** and a few workflow fixes listed below. Everything else — approval cards, question cards, session modes, change review, harness lifecycle — is upstream's work, documented in [upstream's README](https://github.com/zhibailu/dsh-vsc#readme).
 
-<p align="center"><img src="docs/screenshots/sidebar.png" width="290" alt="DSH sidebar" /></p>
-
 ---
 
 ## Human summary of this fork
@@ -25,6 +23,7 @@ You can now:
   - Note that this is fairly expensive due to having to deal with OS level stuff. If you know what you're doing you can disable the 50 MB file size limit in the extension's settings menu.
 - Swap between an English and Chinese translation in both VS Code settings and the extension's gear menu
 - UI QoL: See current workspace at the top of your session, session list is now organized by workspace folder name and organized by folder hierarchy (i.e. if /A/B/C, A/ and C/ are seperate workspaces C will show under A as B/C/), per message timestamps (toggleable), model picker adjusts width to model name
+- You can swap between terminal style (default) and caret arrow key behaviour, in case you write long prompts that need to be edited and don't want to click.
 - Checks webview status and offers to Quit VS Code if there's a webview error. For more details check the agent readme below, but it's a bug that happens if you close VS Code with a DSH webview open and then restart it too quickly. Good news is the bug always clears on your relaunch no matter how quick it is (within a human's reaction time)
 
 

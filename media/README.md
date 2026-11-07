@@ -13,4 +13,3 @@
 ## 不放这里 ❌
 
 - webview 内嵌资源 → `src/panel/media/`
-- 文档截图 → `docs/screenshots/`

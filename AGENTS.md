@@ -29,7 +29,7 @@ Debug via F5 (`.vscode/launch.json`) → Extension Development Host.
 - `src/panel/` — sidebar: `NativePanelProvider.ts`, native `panel.html`, embedded webview.
 - `internal/` — private maintainer docs (plan, playbook, upstream tracking). **git-ignored; never publish or commit to git.**
 - `scratch/` — throwaway probes/tests against a live harness (real events); not production code.
-- `docs/` — public user docs + screenshots.
+- `docs/` — public user docs.
 
 ## Architecture invariants (do not break)
 
