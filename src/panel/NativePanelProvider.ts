@@ -621,8 +621,19 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       case "selectModel": {
         if (!this.activeSessionId) break;
         try {
-          await this.client.selectModel(this.activeSessionId, message.provider, message.model, message.reasoningEffort);
-          await this.postModels();
+          const selected = await this.client.selectModel(this.activeSessionId, message.provider, message.model, message.reasoningEffort);
+          // The model catalog can still report the PREVIOUS default for a few
+          // hundred ms after a switch (measured: stale immediately, correct at
+          // ~400ms). Reflecting the stale value here is what made the picker
+          // need two clicks. Post the confirmed selection now, then reconcile.
+          await this.postModels({
+            provider: message.provider,
+            model: message.model,
+            reasoningEffort: selected?.selected?.reasoningEffort ?? message.reasoningEffort,
+          });
+          setTimeout(() => {
+            void this.postModels();
+          }, 500);
         } catch (error) {
           this.post({ type: "error", message: describeHarnessFailure("切换模型失败", error) });
         }
@@ -1203,16 +1214,26 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     return entries;
   }
 
-  private async postModels(): Promise<void> {
+  private async postModels(override?: { provider: string; model: string; reasoningEffort?: string }): Promise<void> {
     if (!this.client || !this.activeSessionId) return;
     try {
       // 0.2.1 renamed the RPC (session/models -> session/modelCatalog) and
       // reshaped the value: `default` replaces `current`, `routableProviders`
       // replaces `routable`.
       const catalog = await this.client.modelCatalog();
+      // `default` lags a just-made selection for a moment, so a caller that
+      // just selected a model passes the confirmed value to paint immediately.
+      const current = override
+        ? {
+            ...catalog.default,
+            provider: override.provider,
+            model: override.model,
+            ...(override.reasoningEffort !== undefined ? { reasoningEffort: override.reasoningEffort } : {}),
+          }
+        : catalog.default;
       this.post({
         type: "models",
-        current: catalog.default,
+        current,
         groups: catalog.groups.map((g) => ({
           id: g.id,
           name: g.name,

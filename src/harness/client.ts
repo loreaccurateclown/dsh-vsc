@@ -222,7 +222,7 @@ export class HarnessClient {
     provider: string,
     model: string,
     reasoningEffort?: string
-  ): Promise<{ selected?: { provider: string; model: string } }> {
+  ): Promise<{ selected?: { provider: string; model: string; reasoningEffort?: string } }> {
     const request: Record<string, unknown> = { sessionId, provider, model };
     if (reasoningEffort) request.reasoningEffort = reasoningEffort;
     return this.call(METHODS.sessionSelectModel, { request });
