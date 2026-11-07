@@ -71,14 +71,20 @@ grouping by `cwd` gets this wrong, because every session has a `cwd`. The
 the bridge ignored it. It is consumed again (`setWorkspaces`), each session is
 resolved to its workspace through those `sessionIds`, and the top dropdown
 renders one `<optgroup>` per workspace:
-- groups are ordered by **folder path**, not host order, so a subfolder
-  workspace sits next to its parent (`Programming` → `…\StrategyGamev1`); a
-  workspace is indented by the number of workspaces that are its ancestors
-  (capped at three levels, which is as much as a native `<optgroup>` reads
-  well). Rows keep their recency order inside a group;
-- the label is the workspace title (falling back to the folder's leaf name),
-  qualified with the parent folder when two workspaces share a title; the full
-  path is the group's tooltip;
+- groups are ordered by **folder path**, so a subfolder workspace sits next to
+  its parent (`Programming` → `…\StrategyGamev1`). Rows keep their recency
+  order inside a group;
+- a nested workspace is labelled by its path **relative to the nearest ancestor
+  workspace** (`JavaScript\StrategyGamev1`) and prefixed with a
+  non-breaking-space step — Chromium collapses ordinary leading spaces in an
+  `<optgroup label>`, which made plain indentation invisible. Root workspaces
+  keep their title (falling back to the folder's leaf name);
+- the labels are derived from the workspace rows at render time: no filesystem
+  access and no watchers. Moving, copying or renaming a folder shows up as a
+  `workspace/follow` upsert (or a refresh), and the next render simply
+  recomputes the relative paths;
+- the full path is the group's tooltip; colliding labels are qualified with the
+  parent folder;
 - sessions in no workspace go under **Ungrouped**, exactly like the web GUI;
 - before the workspace baseline arrives the list stays flat instead of
   mislabelling every session as ungrouped.
