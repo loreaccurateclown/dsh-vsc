@@ -88,6 +88,10 @@ renders one `<optgroup>` per workspace:
 - the full path is the group's tooltip; colliding labels are qualified with the
   parent folder;
 - sessions in no workspace go under **Ungrouped**, exactly like the web GUI;
+- a small left-aligned caption **above the picker** names the active session's
+  workspace (the same label as its group, or `Ungrouped`), truncated with an
+  ellipsis and tooltipped with the full path — the folder is visible without
+  opening the list;
 - before the workspace baseline arrives the list stays flat instead of
   mislabelling every session as ungrouped.
 

@@ -30,7 +30,11 @@
   .pill.off { background: var(--err); }
   .pill.busy { background: #e0b94a; }
   .pill.loading { background: var(--muted); }
-  #session-select { flex: 1; min-width: 0; background: var(--input-bg); color: var(--fg);
+  #session-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  /* Workspace caption above the picker: small, muted, left-aligned. */
+  .ws-caption { font-size: 11px; line-height: 1.1; color: var(--muted); padding-left: 3px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #session-select { flex: none; width: 100%; min-width: 0; background: var(--input-bg); color: var(--fg);
                     border: 1px solid var(--border); border-radius: 2px; padding: 2px 4px; font-size: 12px; }
   #new-session { flex: none; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 2px;
                  background: transparent; color: var(--fg); cursor: pointer; }
@@ -428,7 +432,10 @@
 <body>
   <header>
     <span id="pill" class="pill off" title="DSH Bridge: 正在加载…"></span>
-    <select id="session-select" title="切换会话"></select>
+    <div id="session-col">
+      <div id="session-workspace" class="ws-caption" hidden></div>
+      <select id="session-select" title="切换会话"></select>
+    </div>
     <button id="settings-btn" title="设置（配置 harness）">⚙</button>
     <div id="new-session-wrap">
       <button id="new-session" title="新会话（选择模式）">＋</button>
@@ -477,6 +484,7 @@
   var vscode = acquireVsCodeApi();
   var $ = function (id) { return document.getElementById(id); };
   var messagesEl = $("messages"), pillEl = $("pill"), selEl = $("session-select"),
+      wsCaptionEl = $("session-workspace"),
       attachEl = $("attach-row"), queueEl = $("queue-row"),
       inputEl = $("input"), sendBtn = $("send"), cancelBtn = $("cancel"), statusEl = $("input-status"),
       permBtnEl = $("perm-btn"), modelBtnEl = $("model-btn"), effortBtnEl = $("effort-btn"), settingsBtnEl = $("settings-btn"),
@@ -2628,6 +2636,24 @@
     wsOrder.forEach(function (id) {
       labelCount[wsLabelById[id]] = (labelCount[wsLabelById[id]] || 0) + 1;
     });
+    // Caption above the picker: the active session's workspace, labelled the
+    // same way as its group (title for a root workspace, relative path for a
+    // nested one). Hidden until the workspace baseline is known, and for the
+    // "Ungrouped" case it says so explicitly.
+    var activeSession = state.sessions.find(function (x) { return x.sessionId === state.activeSessionId; });
+    if (activeSession && wsOrder.length > 0) {
+      var activeWorkspaceId =
+        activeSession.workspaceId && wsById[activeSession.workspaceId] ? activeSession.workspaceId : "";
+      var caption = activeWorkspaceId ? wsLabelById[activeWorkspaceId] : "Ungrouped";
+      wsCaptionEl.textContent = caption;
+      wsCaptionEl.title = activeWorkspaceId
+        ? wsById[activeWorkspaceId].path || caption
+        : "Sessions outside every workspace";
+      wsCaptionEl.hidden = false;
+    } else {
+      wsCaptionEl.textContent = "";
+      wsCaptionEl.hidden = true;
+    }
     var byWorkspace = {};
     var ungrouped = [];
     state.sessions.forEach(function (sess) {
