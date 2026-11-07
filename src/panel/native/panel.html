@@ -225,7 +225,6 @@
   .msg-time { font-size: 11px; color: var(--muted); align-self: center; margin-right: 2px; }
   /* Completion time appended to the bottom-of-turn summary. */
   .turn-end-time { margin-left: 8px; font-size: 11px; color: var(--muted); }
-  .turn-end-tokens { margin-left: 8px; font-size: 11px; color: var(--muted); }
 
   /* Injected time-context readings (dsh-time-context): three lines of harness
      text per occurrence. The panel keeps the information but folds it into one
@@ -236,16 +235,6 @@
   .ctx-note:hover { color: var(--fg); border-color: var(--accent); }
   .ctx-note-full { font-size: 11px; line-height: 1.45; color: var(--muted); white-space: pre-wrap;
     border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
-
-  /* Image context menu. The webview's native menu copies the *selection* as
-     text, so it can never put image bytes on the clipboard — this menu exists
-     because that command cannot work. */
-  .ctx-menu { position: fixed; z-index: 40; min-width: 136px; padding: 4px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); font-size: 12px; }
-  .ctx-menu button { display: block; width: 100%; text-align: left; padding: 4px 8px;
-    background: transparent; border: none; color: var(--fg); cursor: pointer; border-radius: 4px; }
-  .ctx-menu button:hover { background: var(--hover); }
 
   /* Transient toast: clipboard work is asynchronous (a PowerShell round-trip),
      so the UI states "copying…" immediately and resolves to ✓/✗ when it lands.
@@ -614,45 +603,6 @@
     return String(Math.round(n));
   }
 
-  /** The cumulative counters the harness projects for the active session. */
-  function usageTotalsSnapshot() {
-    var t = state.usage && state.usage.totals ? state.usage.totals : null;
-    if (!t) return null;
-    return {
-      uncachedInputTokens: t.uncachedInputTokens || 0,
-      cacheReadTokens: t.cacheReadTokens || 0,
-      outputTokens: t.outputTokens || 0,
-    };
-  }
-
-  /**
-   * Fill in a finished turn's token count.
-   *
-   * Token usage is NOT a durable session event — it only exists as the live
-   * `tokenUsage` projection (cumulative totals), so a turn's cost is measured as
-   * "totals at turn end minus totals at turn start". The final usage frame
-   * usually lands a moment *after* turn/end, which is why this runs on every
-   * metrics update and fills the newest unfilled summary once.
-   */
-  function applyTurnUsage() {
-    var t = usageTotalsSnapshot();
-    if (!t) return;
-    for (var i = state.items.length - 1; i >= 0; i--) {
-      var it = state.items[i];
-      if (it.kind === "turn-end") {
-        if (it.usage || !it.usageBase) return; // already filled, or no baseline
-        var inTok = Math.max(0, t.uncachedInputTokens + t.cacheReadTokens - (it.usageBase.uncachedInputTokens + it.usageBase.cacheReadTokens));
-        var outTok = Math.max(0, t.outputTokens - it.usageBase.outputTokens);
-        if (inTok + outTok <= 0) return;
-        it.usage = { in: inTok, out: outTok };
-        it.version = (it.version || 0) + 1;
-        return;
-      }
-      // Stop at the turn this summary belongs to: anything older is history.
-      if (it.kind === "turn") return;
-    }
-  }
-
   function relTime(ts) {
     if (!ts) return "";
     var diff = Date.now() - ts;
@@ -722,12 +672,6 @@
     return chip;
   }
 
-  /* ---------- image context menu: Copy image ----------
-     VS Code's webview menu offers Cut/Copy/Paste, and Copy copies the DOM
-     selection as text — an image has no text to copy, so the command silently
-     does nothing. Replacing the menu on images is the only way to copy bytes. */
-  var imgMenu = null;
-
   /** One transient toast at a time, on its own row above the composer.
    *  `ms = 0` keeps it until replaced — but never forever: a lost reply must not
    *  leave a permanent "copying…" on screen (that happened once, with a stale
@@ -752,57 +696,70 @@
     return el;
   }
 
-  function hideImgMenu() {
-    if (imgMenu && imgMenu.parentNode) imgMenu.parentNode.removeChild(imgMenu);
-    imgMenu = null;
-  }
-
-  function showImgMenu(x, y, img) {
-    hideImgMenu();
-    var menu = document.createElement("div");
-    menu.className = "ctx-menu";
-    var copy = document.createElement("button");
-    copy.textContent = "Copy image";
-    copy.onclick = function () {
-      hideImgMenu();
-      var src = img.getAttribute("src") || "";
-      var m = /^data:([^;,]+);base64,(.*)$/.exec(src);
-      if (!m) {
-        // Not hydrated yet (still `data-local-src`): start the read and finish
-        // the copy when the bytes land, instead of making the user click twice.
-        var localSrc = img.getAttribute("data-local-src");
-        if (localSrc) {
-          img.__copyPending = true;
-          toast("Preparing image…", 0);
-          post({ type: "readImage", requestId: ++clipboardRequestSeq, path: localSrc });
-        } else {
-          toast("This image has not loaded yet", 2200, true);
-        }
-        return;
-      }
-      // The write is a PowerShell round-trip (~0.2 s): say so immediately so
-      // the state is never ambiguous while the clipboard catches up.
-      toast("Copying image…", 0);
-      post({ type: "copyImage", mediaType: m[1], data: m[2] });
-    };
-    menu.appendChild(copy);
-    document.body.appendChild(menu);
-    menu.style.left = Math.min(x, window.innerWidth - menu.offsetWidth - 8) + "px";
-    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + "px";
-    imgMenu = menu;
-  }
-
   document.addEventListener("contextmenu", function (ev) {
-    var img = ev.target && ev.target.closest ? ev.target.closest("img.md-img") : null;
+    // Two image renderings exist: markdown images (img.md-img) and attachment
+    // thumbnails (imageCell → .u-image img).
+    var img = ev.target && ev.target.closest ? ev.target.closest("img.md-img, .u-image img") : null;
     if (!img) return;
-    ev.preventDefault();
-    showImgMenu(ev.clientX, ev.clientY, img);
+    // Focus the image and let VS Code's OWN menu open. Its Copy command is
+    // Chromium's text-selection copy, so it needs a target: focusing the image
+    // makes the following `copy` event attributable to it. The write itself is
+    // intercepted below, so the native menu (and Ctrl+C) can carry real bytes
+    // when the async clipboard API is available.
+    try {
+      img.tabIndex = 0;
+      img.focus();
+      lastFocusedImage = img;
+    } catch (e) {
+      /* focus is best-effort */
+    }
   });
-  document.addEventListener("mousedown", function (ev) {
-    if (imgMenu && !imgMenu.contains(ev.target)) hideImgMenu();
-  });
-  document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") hideImgMenu();
+
+  var lastFocusedImage = null;
+
+  /** Encode a data: URL and hand it to the async clipboard API. */
+  function writeImageViaClipboardApi(mediaType, base64) {
+    var bin = atob(base64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var blob = new Blob([bytes], { type: mediaType });
+    var item = new ClipboardItem({ [mediaType]: blob });
+    navigator.clipboard.write([item]).then(
+      function () { post({ type: "panelLog", text: "navigator.clipboard image write ok" }); },
+      function (err) {
+        post({ type: "panelLog", text: "navigator.clipboard image write failed: " + String((err && err.message) || err) });
+        fallbackCopyImage(mediaType, base64);
+      },
+    );
+  }
+
+  /** Host-side writer, used when the page-level clipboard is unavailable. */
+  function fallbackCopyImage(mediaType, base64) {
+    toast("Copying image…", 0);
+    post({ type: "copyImage", mediaType: mediaType, data: base64 });
+  }
+
+  /** The copy command (native menu, Ctrl+C) with an image focused and no text
+   *  selection: write the image instead of copying nothing. */
+  function imageCopyTarget() {
+    var img = lastFocusedImage;
+    if (!img || !img.isConnected) return null;
+    var sel = window.getSelection();
+    if (sel && !sel.isCollapsed && String(sel)) return null; // real text wins
+    var m = /^data:([^;,]+);base64,(.*)$/.exec(img.getAttribute("src") || "");
+    return m ? { mediaType: m[1], data: m[2] } : null;
+  }
+
+  document.addEventListener("copy", function (ev) {
+    var target = imageCopyTarget();
+    if (!target) return;
+    if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem === "function") {
+      ev.preventDefault();
+      writeImageViaClipboardApi(target.mediaType, target.data);
+    } else {
+      post({ type: "panelLog", text: "navigator.clipboard unavailable — host writer used" });
+      fallbackCopyImage(target.mediaType, target.data);
+    }
   });
 
   /* ---------- local images referenced by path ----------
@@ -981,9 +938,8 @@
         // reading history, or the whole new round would never render.
         if (suspended) { suspended = false; forceBottom = true; }
         state.items.push({ kind: "turn", turn: state.lastTurn, done: false,
-                           startTime: state.turnStartTime,
-                           // Baseline for this turn's token cost (cumulative projection).
-                           usageBase: usageTotalsSnapshot() });
+                           startTime: state.turnStartTime });
+
         break;
       case "user/message": {
         // user/message carries content at data.content (assistant/message wraps
@@ -1108,14 +1064,14 @@
             turnItem.elapsed = turnItem.startTime ? Math.max(0, turnItem.endTime - turnItem.startTime) : undefined;
             turnItem.totalDiff = aggregateTurnDiff(state.items, turnItem.turn);
             turnItem.version = (turnItem.version || 0) + 1;
-            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff, endTime: turnItem.endTime, usageBase: turnItem.usageBase };
+            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff, endTime: turnItem.endTime };
             break;
           }
         }
         // Bottom-of-turn summary strip: appears the moment the turn ends, so
         // the totals are right under the newest message (no scrolling up).
         if (endTurn) {
-          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff, endTime: endTurn.endTime, usageBase: endTurn.usageBase });
+          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff, endTime: endTurn.endTime });
           // The final render of this round must still happen even though the
           // turn-end makes everything frozen: rAF coalescing can delay the
           // last text-delta render past this boundary, and frozen would then
@@ -1949,12 +1905,6 @@
         var s = "<span class='check'>✓</span><span>第 " + item.turn + " 轮完成 · 用时 " + dur + "</span>";
         // When the round ended — the event carries it; `endTime` rides the item.
         if (state.messageTimestamps && item.endTime) s += "<span class='turn-end-time'>" + fmtClock(item.endTime, true) + "</span>";
-        // Tokens spent by this round (input / output split when both exist).
-        if (item.usage) {
-          var tin = fmtTok(item.usage.in), tout = fmtTok(item.usage.out);
-          var tokText = tin && tout ? "↑" + tin + " ↓" + tout : fmtTok(item.usage.in + item.usage.out) + " tok";
-          s += "<span class='turn-end-tokens' title='Tokens this round — input (uncached + cache reads) and output'>" + tokText + "</span>";
-        }
         var td = item.totalDiff;
         if (td && (td.added || td.deleted)) {
           s += diffChipHtml(td);
@@ -2321,7 +2271,6 @@
         if (msg.sessionId === state.activeSessionId) {
           if (msg.usage !== undefined) state.usage = msg.usage;
           updateStatusLine();
-          applyTurnUsage();
         }
         return;
       }
