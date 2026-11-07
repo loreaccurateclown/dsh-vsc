@@ -225,6 +225,7 @@
   .msg-time { font-size: 11px; color: var(--muted); align-self: center; margin-right: 2px; }
   /* Completion time appended to the bottom-of-turn summary. */
   .turn-end-time { margin-left: 8px; font-size: 11px; color: var(--muted); }
+  .turn-end-tokens { margin-left: 8px; font-size: 11px; color: var(--muted); }
 
   /* Injected time-context readings (dsh-time-context): three lines of harness
      text per occurrence. The panel keeps the information but folds it into one
@@ -605,6 +606,53 @@
     return text;
   }
 
+  /** Compact token count: 1234 → "1.2k", 1234567 → "1.2M". */
+  function fmtTok(n) {
+    if (typeof n !== "number" || !isFinite(n) || n <= 0) return "";
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + "k";
+    return String(Math.round(n));
+  }
+
+  /** The cumulative counters the harness projects for the active session. */
+  function usageTotalsSnapshot() {
+    var t = state.usage && state.usage.totals ? state.usage.totals : null;
+    if (!t) return null;
+    return {
+      uncachedInputTokens: t.uncachedInputTokens || 0,
+      cacheReadTokens: t.cacheReadTokens || 0,
+      outputTokens: t.outputTokens || 0,
+    };
+  }
+
+  /**
+   * Fill in a finished turn's token count.
+   *
+   * Token usage is NOT a durable session event — it only exists as the live
+   * `tokenUsage` projection (cumulative totals), so a turn's cost is measured as
+   * "totals at turn end minus totals at turn start". The final usage frame
+   * usually lands a moment *after* turn/end, which is why this runs on every
+   * metrics update and fills the newest unfilled summary once.
+   */
+  function applyTurnUsage() {
+    var t = usageTotalsSnapshot();
+    if (!t) return;
+    for (var i = state.items.length - 1; i >= 0; i--) {
+      var it = state.items[i];
+      if (it.kind === "turn-end") {
+        if (it.usage || !it.usageBase) return; // already filled, or no baseline
+        var inTok = Math.max(0, t.uncachedInputTokens + t.cacheReadTokens - (it.usageBase.uncachedInputTokens + it.usageBase.cacheReadTokens));
+        var outTok = Math.max(0, t.outputTokens - it.usageBase.outputTokens);
+        if (inTok + outTok <= 0) return;
+        it.usage = { in: inTok, out: outTok };
+        it.version = (it.version || 0) + 1;
+        return;
+      }
+      // Stop at the turn this summary belongs to: anything older is history.
+      if (it.kind === "turn") return;
+    }
+  }
+
   function relTime(ts) {
     if (!ts) return "";
     var diff = Date.now() - ts;
@@ -933,7 +981,9 @@
         // reading history, or the whole new round would never render.
         if (suspended) { suspended = false; forceBottom = true; }
         state.items.push({ kind: "turn", turn: state.lastTurn, done: false,
-                           startTime: state.turnStartTime });
+                           startTime: state.turnStartTime,
+                           // Baseline for this turn's token cost (cumulative projection).
+                           usageBase: usageTotalsSnapshot() });
         break;
       case "user/message": {
         // user/message carries content at data.content (assistant/message wraps
@@ -1058,14 +1108,14 @@
             turnItem.elapsed = turnItem.startTime ? Math.max(0, turnItem.endTime - turnItem.startTime) : undefined;
             turnItem.totalDiff = aggregateTurnDiff(state.items, turnItem.turn);
             turnItem.version = (turnItem.version || 0) + 1;
-            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff, endTime: turnItem.endTime };
+            endTurn = { turn: turnItem.turn, elapsed: turnItem.elapsed, totalDiff: turnItem.totalDiff, endTime: turnItem.endTime, usageBase: turnItem.usageBase };
             break;
           }
         }
         // Bottom-of-turn summary strip: appears the moment the turn ends, so
         // the totals are right under the newest message (no scrolling up).
         if (endTurn) {
-          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff, endTime: endTurn.endTime });
+          state.items.push({ kind: "turn-end", turn: endTurn.turn, elapsed: endTurn.elapsed, totalDiff: endTurn.totalDiff, endTime: endTurn.endTime, usageBase: endTurn.usageBase });
           // The final render of this round must still happen even though the
           // turn-end makes everything frozen: rAF coalescing can delay the
           // last text-delta render past this boundary, and frozen would then
@@ -1899,6 +1949,12 @@
         var s = "<span class='check'>✓</span><span>第 " + item.turn + " 轮完成 · 用时 " + dur + "</span>";
         // When the round ended — the event carries it; `endTime` rides the item.
         if (state.messageTimestamps && item.endTime) s += "<span class='turn-end-time'>" + fmtClock(item.endTime, true) + "</span>";
+        // Tokens spent by this round (input / output split when both exist).
+        if (item.usage) {
+          var tin = fmtTok(item.usage.in), tout = fmtTok(item.usage.out);
+          var tokText = tin && tout ? "↑" + tin + " ↓" + tout : fmtTok(item.usage.in + item.usage.out) + " tok";
+          s += "<span class='turn-end-tokens' title='Tokens this round — input (uncached + cache reads) and output'>" + tokText + "</span>";
+        }
         var td = item.totalDiff;
         if (td && (td.added || td.deleted)) {
           s += diffChipHtml(td);
@@ -2265,6 +2321,7 @@
         if (msg.sessionId === state.activeSessionId) {
           if (msg.usage !== undefined) state.usage = msg.usage;
           updateStatusLine();
+          applyTurnUsage();
         }
         return;
       }
