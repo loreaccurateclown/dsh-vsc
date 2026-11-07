@@ -157,12 +157,6 @@
           "default": "auto",
           "description": "Language of this extension's own UI: panel, settings tab, status bar, and the notifications and errors the host raises. `zh` renders upstream's strings untouched. The harness's own output (agent replies, tool output) is not translated. Changing it rebuilds the panel, which reloads its state."
         },
-        "dshVsc.maxAttachMB": {
-          "type": "number",
-          "default": 50,
-          "minimum": 0,
-          "description": "Upper size limit in MB for anything this extension reads for you: images referenced by path, images pasted from the clipboard, and files dropped onto the panel. 0 disables the limit (you know what you are doing). This is a transport guard — the harness enforces its own admission limits on images, and stores generic files verbatim regardless."
-        },
         "dshVsc.promptArrowKeys": {
           "type": "string",
           "enum": [
@@ -180,6 +174,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show wall-clock times in the transcript: every user message, and each turn (“Round N · HH:MM”) for the agent side. Times come from the session log’s own event timestamps, so history replays identically."
+        },
+        "dshVsc.attachSizeLimit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Cap anything this extension reads on your behalf — images referenced by path, images pasted from the clipboard, images dropped on the panel — at 50 MB. Turn it off to remove the limit entirely (you know what you are doing). This is a transport guard only: the harness still applies its own admission limits to images, and stores generic files verbatim regardless."
         }
       }
     }

@@ -567,17 +567,15 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     return [...new Set(dirs)];
   }
 
-  /**
-   * Size cap for anything this extension reads on the panel's behalf, in bytes.
-   *
-   * `dshVsc.maxAttachMB: 0` means disabled — a single value instead of a
-   * boolean, so there is no second "enabled" state to test. The default (50 MB)
-   * matches DSH Web Chat, and is a transport guard: the harness still applies
-   * its own admission limits to images, and stores generic files verbatim.
-   */
+  /** Size cap for anything this extension reads on the panel's behalf, in
+   *  bytes — `undefined` when `dshVsc.attachSizeLimit` is off. The byte value is
+   *  a constant rather than a preference: one toggle beats a number plus a
+   *  magic `0` that means "unlimited". */
+  private static readonly ATTACH_LIMIT_BYTES = 50 * 1024 * 1024;
+
   private maxAttachBytes(): number | undefined {
-    const mb = vscode.workspace.getConfiguration("dshVsc").get<number>("maxAttachMB", 50);
-    return typeof mb === "number" && mb > 0 ? Math.floor(mb * 1024 * 1024) : undefined;
+    const limited = vscode.workspace.getConfiguration("dshVsc").get<boolean>("attachSizeLimit", true);
+    return limited === false ? undefined : NativePanelProvider.ATTACH_LIMIT_BYTES;
   }
 
   /**
@@ -1686,7 +1684,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           language: cfg.get<string>("language", "auto"),
           promptArrowKeys: cfg.get<string>("promptArrowKeys", "history"),
         messageTimestamps: cfg.get<boolean>("messageTimestamps", true),
-          maxAttachMB: cfg.get<number>("maxAttachMB", 50),
+          attachSizeLimit: cfg.get<boolean>("attachSizeLimit", true),
         },
       });
     } catch {
@@ -1695,11 +1693,11 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async setExtensionSetting(key: string, value: string | number | boolean): Promise<void> {
-    const allowed: Record<string, "language" | "promptArrowKeys" | "messageTimestamps" | "maxAttachMB"> = {
+    const allowed: Record<string, "language" | "promptArrowKeys" | "messageTimestamps" | "attachSizeLimit"> = {
       language: "language",
       promptArrowKeys: "promptArrowKeys",
       messageTimestamps: "messageTimestamps",
-      maxAttachMB: "maxAttachMB",
+      attachSizeLimit: "attachSizeLimit",
     };
     const setting = allowed[key];
     if (!setting) {
