@@ -78,7 +78,9 @@ renders one `<optgroup>` per workspace:
   workspace** (`JavaScript\StrategyGamev1`) and prefixed with a
   non-breaking-space step — Chromium collapses ordinary leading spaces in an
   `<optgroup label>`, which made plain indentation invisible. Root workspaces
-  keep their title (falling back to the folder's leaf name);
+  keep their title (falling back to the folder's leaf name). Labels are built
+  from the real path segments, so **casing is preserved** — on Linux
+  `JavaScript` and `javascript` are different directories;
 - the labels are derived from the workspace rows at render time: no filesystem
   access and no watchers. They are recomputed whenever the workspace baseline or
   a `workspace/follow` frame refreshes the list;

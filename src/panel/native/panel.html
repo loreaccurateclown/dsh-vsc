@@ -2519,6 +2519,20 @@
     return "Workspace";
   }
 
+  /** Path split into segments, preserving the original casing. */
+  function folderSegments(dir) {
+    var parts = String(dir || "")
+      .replace(/\\/g, "/")
+      .replace(/\/+/g, "/")
+      .replace(/\/+$/, "")
+      .split("/");
+    var segments = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].length > 0) segments.push(parts[i]);
+    }
+    return segments;
+  }
+
   /** Compare-friendly folder path: one separator, no trailing slash, lower-case. */
   function normFolderPath(dir) {
     return String(dir || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -2566,9 +2580,14 @@
     });
     // Order groups by folder path rather than host order, so a subfolder
     // workspace sits next to its parent (Programming → …\StrategyGamev1).
+    // The normalised path is used for COMPARISON only; labels are built from
+    // the original segments so casing survives (on Linux "JavaScript" and
+    // "javascript" are different directories).
     var wsPath = {};
+    var wsSegments = {};
     wsOrder.forEach(function (id) {
       wsPath[id] = normFolderPath(wsById[id].path);
+      wsSegments[id] = folderSegments(wsById[id].path);
     });
     wsOrder.sort(function (a, b) {
       if (wsPath[a] === wsPath[b]) return 0;
@@ -2578,23 +2597,29 @@
     // ancestor workspace (Programming → "JavaScript\StrategyGamev1"), which
     // reads as nesting without relying on indentation — Chromium collapses
     // leading spaces in an optgroup label. It is derived from the workspace
-    // rows alone: no filesystem access, no watching. A move/rename arrives as
-    // an upsert on workspace/follow and simply re-renders.
+    // rows alone: no filesystem access, no watching.
     var wsLabelById = {};
     wsOrder.forEach(function (id) {
       var self = wsPath[id];
-      var ancestor = "";
+      var ancestorId = null;
+      var ancestorLength = -1;
       if (self) {
         wsOrder.forEach(function (other) {
           if (other === id) return;
           var parent = wsPath[other];
           if (!parent || self.indexOf(parent + "/") !== 0) return;
-          if (parent.length > ancestor.length) ancestor = parent;
+          if (parent.length > ancestorLength) {
+            ancestorLength = parent.length;
+            ancestorId = other;
+          }
         });
       }
-      wsLabelById[id] = ancestor
-        ? self.slice(ancestor.length + 1).replace(/\//g, "\\")
-        : workspaceLabel(wsById[id]);
+      var selfSegments = wsSegments[id] || [];
+      var ancestorSegments = ancestorId === null ? [] : wsSegments[ancestorId] || [];
+      wsLabelById[id] =
+        ancestorId !== null && selfSegments.length > ancestorSegments.length
+          ? selfSegments.slice(ancestorSegments.length).join("\\")
+          : workspaceLabel(wsById[id]);
     });
     var labelCount = {};
     wsOrder.forEach(function (id) {
