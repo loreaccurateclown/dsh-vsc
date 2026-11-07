@@ -2565,8 +2565,7 @@
       wsOrder.push(ws.workspaceId);
     });
     // Order groups by folder path rather than host order, so a subfolder
-    // workspace sits next to its parent (Programming → …\StrategyGamev1);
-    // a child is indented by the number of workspaces that are its ancestors.
+    // workspace sits next to its parent (Programming → …\StrategyGamev1).
     var wsPath = {};
     wsOrder.forEach(function (id) {
       wsPath[id] = normFolderPath(wsById[id].path);
@@ -2575,19 +2574,31 @@
       if (wsPath[a] === wsPath[b]) return 0;
       return wsPath[a] < wsPath[b] ? -1 : 1;
     });
-    var wsDepth = {};
+    // A nested workspace is labelled by its path RELATIVE to the nearest
+    // ancestor workspace (Programming → "JavaScript\StrategyGamev1"), which
+    // reads as nesting without relying on indentation — Chromium collapses
+    // leading spaces in an optgroup label. It is derived from the workspace
+    // rows alone: no filesystem access, no watching. A move/rename arrives as
+    // an upsert on workspace/follow and simply re-renders.
+    var wsLabelById = {};
     wsOrder.forEach(function (id) {
-      var depth = 0;
-      if (wsPath[id]) {
+      var self = wsPath[id];
+      var ancestor = "";
+      if (self) {
         wsOrder.forEach(function (other) {
           if (other === id) return;
           var parent = wsPath[other];
-          if (parent && wsPath[id].indexOf(parent + "/") === 0) depth++;
+          if (!parent || self.indexOf(parent + "/") !== 0) return;
+          if (parent.length > ancestor.length) ancestor = parent;
         });
       }
-      // A native optgroup has no real nesting; a couple of levels of indent is
-      // all that reads well, and deeper trees are rare.
-      wsDepth[id] = Math.min(depth, 3);
+      wsLabelById[id] = ancestor
+        ? self.slice(ancestor.length + 1).replace(/\//g, "\\")
+        : workspaceLabel(wsById[id]);
+    });
+    var labelCount = {};
+    wsOrder.forEach(function (id) {
+      labelCount[wsLabelById[id]] = (labelCount[wsLabelById[id]] || 0) + 1;
     });
     var byWorkspace = {};
     var ungrouped = [];
@@ -2623,11 +2634,16 @@
         if (!list || list.length === 0) return;
         var ws = wsById[id];
         var og = document.createElement("optgroup");
-        var title = workspaceLabel(ws);
-        // Two workspaces sharing a title would look identical in a native
-        // picker, so qualify the label with the parent folder.
-        og.label = new Array(wsDepth[id] + 1).join("  ") + (titleCount[title] > 1 ? title + " — " + folderParent(ws.path) : title);
-        og.title = ws.path || title;
+        var label = wsLabelById[id];
+        // Nested = labelled by a relative path rather than the workspace title.
+        var nested = label !== workspaceLabel(ws);
+        // Labels can still collide (same relative path under different
+        // parents), so qualify with the parent folder.
+        if (labelCount[label] > 1) label += " — " + folderParent(ws.path);
+        // A non-breaking space survives label whitespace collapsing: nested
+        // groups get a visible step without pretending to be a tree.
+        og.label = (nested ? "\u00A0\u00A0" : "") + label;
+        og.title = ws.path || label;
         selEl.appendChild(og);
         list.forEach(function (sess) { appendSessionOption(og, sess); });
       });
