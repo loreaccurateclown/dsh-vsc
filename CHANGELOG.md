@@ -11,7 +11,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Togglable English UI, at runtime.** The zh→en tables in `i18n/maps/` are compiled by `scripts/gen-i18n-tables.mjs` into a module the extension loads, so webview templates are translated as they load and host strings go through `t()` — no build step rewrites upstream's artifacts any more. `dshVsc.language` = `auto` / `en` / `zh`; `zh` renders upstream's exact strings, and a missing entry falls back to Chinese instead of breaking. Messages with values use `tf("已打开 {0} 个 diff。", n)` so each language keeps its own word order.
 - **Extension settings inside the panel.** The settings tab's General page now opens with an *Extension Settings* card (language, arrow keys, attachment cap, timestamps) wired to VS Code config. These rows work before the harness is reachable, because they are local to the extension.
 - **Transcript timestamps** (`dshVsc.messageTimestamps`, default on): every user message shows `HH:MM ZONE`, each turn shows its start in the separator, and the completion strip shows when the round ended. All from the log's own event times, so history replays identically.
-- **Token count per round** on the completion strip: `↑12.1k ↓1.3k` — input (uncached plus cache reads) and output for that round, measured as the difference between the `tokenUsage` projection at turn start and turn end. Token usage is a live projection rather than a durable event, so rounds replayed from history show the count only if the values were captured while they ran.
 - **Composer arrow modes** (`dshVsc.promptArrowKeys`): `history` keeps the terminal behaviour (Up/Down walk previous prompts); `caret` gives the arrows back to the text.
 - **Attachment size cap** (`dshVsc.maxAttachMB`, default 50, `0` disables): applied to path reads, clipboard images, dropped/pasted files and inline `data:` images.
 - **Copy image** from the transcript: right-click → *Copy image* writes real bytes via PowerShell `SetImage`, JXA `NSPasteboard`, or `wl-copy`/`xclip`. VS Code's own Copy can only copy the text selection, so that menu is replaced on images.
@@ -37,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Known issues
 
+- **Per-round token counts are not available.** Token usage ships as a `tokenUsage` projection published at turn boundaries, not as session events, so a round's own cost cannot be attributed to it — and history replay cannot show it at all. Measurements and every approach tried are in [`DEV_AGENTS.md`](DEV_AGENTS.md) §1. The status bar still reports session totals.
 - **`Could not register service worker: InvalidStateError`** can leave the panel blank for the lifetime of a VS Code process. A relaunch within ~15 s of quitting triggers it (measured: ~8–10 s failed, ~16 s worked). *Reload Window* does not clear it, and deferring the first paint or hiding the view does not prevent it — the first registration is attempted when VS Code creates the webview host, before extension code runs. Quit, wait ten or so seconds, reopen; the extension detects the dead panel and offers exactly that.
 
 ## [0.3.14] - 2026-10-29
