@@ -38,7 +38,7 @@ node scratch/auto-test.mjs <sessionId> <turnNo>
 |---|---|
 | `src/` | Extension runtime (TS + panel assets) |
 | `src/harness/protocol.ts` | The wire contract for the DSH 0.2.1 line — read it before touching any RPC |
-| `docs/` | Public user docs (incl. `design.md`, screenshots) |
+| `docs/` | Public user docs (incl. `design.md`) |
 | `internal/` | Private maintainer notes — git-ignored, do **not** commit |
 | `scratch/` | Throwaway probes/tests against a live harness |
 | `scripts/` | Maintainer/ops scripts |
