@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Every tool card lost its result.** A `tool/result` message carries its blocks directly (no `tool-result` wrapper), so the result text — and `read_image`'s image — was discarded. Both shapes are accepted now, and parallel calls pair results by `callId` instead of "the most recent call".
 - **Code-block copy buttons stayed Chinese.** The inlined renderer bundle was built with esbuild's default `ascii` charset, which escaped CJK to `\uXXXX`; literal translation could never match it. The bundle is emitted as UTF-8 now.
 - **Copy image needed two attempts.** The writer retries when another process holds the clipboard, transcodes WebP (which GDI+ cannot decode) through WIC, and reports a definite outcome.
+- **Copy image could report success without replacing the clipboard.** The old check only asked "is there an image?", so a `SetImage` that failed against another app's clipboard left the previous image in place and still looked like success — the next paste then produced the *previous* image. The write is now confirmed with `GetClipboardSequenceNumber()` (O(1); no read-back and no hashing a 25 MB image), and a clipboard that never changed is retried once and then reported as a failure.
 - **Pasting picked up the previous clipboard.** Windows reads now sample the clipboard twice ~150 ms apart, which defeats delayed rendering by the source application.
 - A malformed i18n entry (`Copy中…` as a key) and a missing `复制代码` entry that rendered the tooltip as `Copy代码`.
 
