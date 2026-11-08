@@ -107,6 +107,7 @@ No API key is needed here: the key stays on the DSH side. The extension is a sha
 | `dshVsc.url` | `http://127.0.0.1:3080` | Base URL of the harness. Also honors `DSH_WEB_URL`. |
 | `dshVsc.autoStart` | `true` | Start `dsh web` when no harness answers at that URL. |
 | `dshVsc.token` | `""` | Launch token, only needed for a harness you started yourself or one inside WSL. It changes every launch. |
+| `dshVsc.tokenFile` | `""` | Path to a file carrying the launch token — a supervisor's `dsh web` log line, a container log, or a JSON export like `%TEMP%\dsh-vsc-token.json`. The newest token is re-read on every reconnect, so a restarted harness needs no paste and no window reload. Tried before `dshVsc.token`. |
 | `dshVsc.language` | `auto` | `auto` / `en` / `zh` for this extension's own UI, including its notifications and errors. `zh` is upstream's original strings. Changing it rebuilds the panel. |
 | `dshVsc.messageTimestamps` | `true` | Wall-clock times in the transcript: every user message, and each turn as "Round N · HH:MM". Reads the session log's own event times, so history replays identically. |
 | `dshVsc.promptArrowKeys` | `history` | `history` = terminal Up/Down through previous prompts; `caret` = Up/Down move the cursor in the draft. |
@@ -128,6 +129,7 @@ No API key is needed here: the key stays on the DSH side. The extension is a sha
 
   The extension cannot prevent it, so it makes it legible instead: the panel's script posts a `panelReady` handshake at load, and if it is silent for 1 s the status bar flips to *"panel did not load — restart VS Code"* and a notification explains the cause, offers **Quit VS Code** (one click, no second modal), and — when a shutdown marker shows this instance started soon after the previous one — says how soon, which is the trigger in numbers. The same detail is logged to **DSH Bridge**.
 - **A second client gets 403** when the harness runs with `browserAccess:false`. Use the exported `%TEMP%\dsh-vsc-token.json`, or paste the token into `dshVsc.token`.
+- **Harness owned by a script or service.** Point `dshVsc.url` at it, set `dshVsc.autoStart` to `false`, and give `dshVsc.tokenFile` the path its launcher writes: the `dsh web` launch line (redirected to a log) or a JSON token export. The newest token is read on every reconnect, so restarts cost no paste and no window reload.
 - **Never point two harnesses at one `DSH_HOME`.** Two `dsh web` processes sharing a history corrupt session logs (`corrupt session log: seq gap`). The extension never starts a second server on an existing history.
 
 ## Development
