@@ -142,6 +142,11 @@
           "default": "",
           "description": "Since DSH 0.2.1, every /api call and event stream requires a cookie exchanged for the token printed by `dsh web` at launch. A harness this extension starts itself reads the token from its launch output, so nothing needs filling in; only when you started `dsh web` manually (or connect to an instance inside WSL) do you paste that token=… URL or the token itself here. The token changes on every launch."
         },
+        "dshVsc.tokenFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a file carrying the launch token of a harness this extension does not start — a supervisor script's redirect of `dsh web` output, a container log, or a JSON export such as %TEMP%\\dsh-vsc-token.json. The newest token in the file is used, and it is re-read on every (re)connect, so a restarted harness needs neither a paste nor a window reload. Leave empty to disable. Tried before `dshVsc.token`."
+        },
         "dshVsc.language": {
           "type": "string",
           "enum": [

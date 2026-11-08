@@ -172,3 +172,41 @@ because micromark's sanitizer strips them at parse time.
 5. The Extension Settings card in `settings.html` writes through
    `setExtensionSetting` (`postExtensionSettings` on `settingsReady`); these rows
    are handled before the harness-connection gate, so they work while DSH is down.
+
+---
+
+## 9. Auth when the harness is not ours
+
+DSH mints a fresh launch token per process and fences `/api/*` and the WS
+handshake behind a cookie exchanged for it
+(`/connect?token=…&interactions=answer`). The extension had exactly two sources:
+the stdout of a harness it started itself, or a token the user pastes. A harness
+owned by a **supervisor** — a scheduled task, a launcher that redirects `dsh web`
+output, a container, a WSL instance — is neither, so every restart forced a paste.
+
+`dshVsc.tokenFile` closes that gap: give it the path the launcher writes and the
+newest token is read on each connection attempt. The reader is
+`src/harness/tokenFile.ts`, deliberately a pure module so it can be exercised
+without VS Code. Two shapes are accepted — a `dsh web: http://…?token=…` launch
+line, or `"token": "…"` in JSON (the export this extension already writes to
+`%TEMP%\dsh-vsc-token.json`) — and only the file's tail is scanned, because the
+newest token is the last one appended.
+
+Facts worth keeping:
+
+- **Read per attempt, never cached.** `authenticate()` runs on every refresh and
+  a dropped event stream schedules a recheck, so a restarted harness re-auths by
+  itself: no watcher, no window reload.
+- **Order is launch → tokenFile → config → prompt.** A harness we started should
+  win over a stale file, and a file we were pointed at should win over a token
+  pasted months ago.
+- **Never trust a short token.** `tokenFrom()` accepts a bare token only when it
+  matches `/^[A-Za-z0-9_-]{16,}$/` and **silently discards** anything shorter — a
+  placeholder such as `gateway` yields an empty candidate list, so the user gets
+  the paste prompt with no explanation of why. Whatever changes here, log a
+  rejected configured token instead of dropping it.
+- **A fronting proxy is the other option.** A loopback-presenting reverse proxy
+  can rewrite `Host`/`Origin` and substitute the real token on `/connect`, so the
+  client only ever holds a placeholder. It must present a *loopback* authority or
+  DSH's Host fence rejects it, and any "skip auth locally" behaviour has to key
+  off the **source address** (`127.0.0.1` / `::1`), never a header.

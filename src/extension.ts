@@ -18,6 +18,7 @@ import {
   readPidRecord,
   HARNESS_PID_FILE,
 } from "./harness/launcher";
+import { readTokenFromFile } from "./harness/tokenFile";
 import { HarnessEventStream } from "./events/eventStream";
 import { ChangeTracker } from "./editor/changeTracker";
 import { buildSelectionContext } from "./editor/askSelection";
@@ -313,8 +314,9 @@ export function activate(context: vscode.ExtensionContext): void {
   /**
    * DSH 0.2.1 fenced every `/api/*` call and the WS handshake behind a signed
    * cookie minted from the process launch token. A harness WE started hands its
-   * token over on stdout (launcher.ts captures it); one the user started
-   * themselves can only be reached with a token they paste.
+   * token over on stdout (launcher.ts captures it); a supervisor we do not own
+   * can publish it to a file (`dshVsc.tokenFile`); anything else can only be
+   * reached with a token the user pastes.
    *
    * @returns whether the client now holds a cookie.
    */
@@ -327,8 +329,16 @@ export function activate(context: vscode.ExtensionContext): void {
       launched = readLaunchToken();
     }
     const configured = vscode.workspace.getConfiguration("dshVsc").get<string>("token")?.trim();
-    const candidates: { token: string; source: "launch" | "config" }[] = [];
+    const tokenFile = vscode.workspace.getConfiguration("dshVsc").get<string>("tokenFile")?.trim();
+    const candidates: { token: string; source: "launch" | "tokenFile" | "config" }[] = [];
     if (launched) candidates.push({ token: launched, source: "launch" });
+    if (tokenFile) {
+      // A supervisor owns the harness and redirects its launch line into this
+      // file. Read per attempt: the token rotates with every harness process.
+      const fromFile = readTokenFromFile(tokenFile);
+      if (fromFile) candidates.push({ token: fromFile, source: "tokenFile" });
+      else log.appendLine(`auth: no launch token in ${tokenFile}`);
+    }
     const fromConfig = configured ? tokenFrom(configured) : undefined;
     if (fromConfig) candidates.push({ token: fromConfig, source: "config" });
     for (const candidate of candidates) {
