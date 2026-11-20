@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Copy image could report success without replacing the clipboard.** The old check only asked "is there an image?", so a `SetImage` that failed against another app's clipboard left the previous image in place and still looked like success — the next paste then produced the *previous* image. The write is now confirmed with `GetClipboardSequenceNumber()` (O(1); no read-back and no hashing a 25 MB image), and a clipboard that never changed is retried once and then reported as a failure.
 - **Pasting picked up the previous clipboard.** Windows reads now sample the clipboard twice ~150 ms apart, which defeats delayed rendering by the source application.
 - A malformed i18n entry (`Copy中…` as a key) and a missing `复制代码` entry that rendered the tooltip as `Copy代码`.
+- **The Copy button sat on top of the code permanently.** It is absolutely positioned over the first line's tail, and a markdown fence reserves no gutter for it (`.msg .body pre` out-specifies `pre.md-code`'s `padding-right`), so a long line was hidden behind the button. It now starts at `opacity: 0` / `pointer-events: none`, is revealed while its own `<pre>` is hovered, stays reachable by keyboard through `:focus-visible`, and is shown outright on coarse pointers where hover does not exist.
 
 ### Known issues
 
