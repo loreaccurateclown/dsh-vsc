@@ -250,10 +250,21 @@
     color: var(--accent); }
   .toast.bad { color: #ff8a80; border-color: rgba(217, 83, 79, 0.65); }
   pre.md-code { position: relative; padding-right: 56px; }
+  /* Hidden until its own block is hovered: permanently visible it is clutter,
+     and in a markdown fence (where no gutter is reserved: `.msg .body pre`
+     out-specifies the padding-right below) it covers the first line's tail.
+     Reveal on hover of the containing <pre> — markdown fences and tool
+     args/result both put the button inside theirs — keep it reachable by
+     keyboard via :focus-visible, and show it outright where hover does not
+     exist. pointer-events stays off while invisible so the hidden button never
+     swallows a click meant for selecting text. */
   .block-copy { position: absolute; top: 4px; right: 4px; z-index: 5;
                 background: var(--input-bg); color: var(--muted); border: 1px solid var(--border);
-                border-radius: 3px; font-size: 10px; padding: 1px 6px; cursor: pointer; opacity: .85; }
+                border-radius: 3px; font-size: 10px; padding: 1px 6px; cursor: pointer;
+                opacity: 0; pointer-events: none; transition: opacity .12s ease-in-out; }
+  pre:hover > .block-copy, .block-copy:focus-visible { opacity: .9; pointer-events: auto; }
   .block-copy:hover { color: var(--fg); border-color: var(--accent); opacity: 1; }
+  @media (pointer: coarse) { .block-copy { opacity: .85; pointer-events: auto; } }
 
   .sys-err { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--err); color: var(--err); white-space: pre-wrap; font-size: 12px; }
   .cmd-note { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--ok); color: var(--muted); font-size: 12px; white-space: pre-wrap; }
