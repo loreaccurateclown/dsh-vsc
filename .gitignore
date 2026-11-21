@@ -10,6 +10,9 @@ dist/
 # Dev/test artifacts
 scripts/*.log
 
+# Agent code-index cache (rebuilt on demand; never source)
+.dsh-code-index/
+
 # One-off debug/scratch scripts (never commit)
 scratch/
 
