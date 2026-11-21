@@ -17,6 +17,9 @@
     --input-bg: var(--vscode-input-background, #3c3c3c);
     --err: var(--vscode-errorForeground, #f14c4c);
     --ok: #4ec9b0;
+    /* Transcript base size (dshVsc.textSize). Header, composer and status line
+       keep their own sizes, so the chrome does not grow with the conversation. */
+    --text-size: var(--vscode-font-size, 13px);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; height: 100%; }
@@ -123,6 +126,8 @@
   .msg.user .body { max-width: 92%; background: var(--input-bg); border: 1px solid var(--border);
                     border-radius: 6px; padding: 6px 10px; white-space: pre-wrap; }
   .msg.assistant .body { white-space: pre-wrap; }
+  /* dshVsc.textSize sets the base; everything inside the body derives from it. */
+  .msg .body { font-size: var(--text-size); }
   /* Transcript images: what the user actually sent, shown in the bubble the
      way the official conversation view does (the log only stores a ref, so the
      bytes arrive via session.attachment and patch into place). */
@@ -140,14 +145,15 @@
   .u-image-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 4px; font-size: 10px;                 color: var(--muted); background: rgba(0,0,0,.45); overflow: hidden; text-overflow: ellipsis;
                  white-space: nowrap; }
   .msg .body pre { margin: 4px 0; padding: 6px 8px; background: var(--input-bg); border-radius: 3px;
-    white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+    white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace);
+    font-size: calc(var(--text-size) - 1px); }
   .msg .body code { word-break: break-all; }
   .reasoning { border-left: 2px solid var(--border); padding: 2px 10px; color: var(--muted); margin: 4px 0; }
-  .reasoning-head { cursor: pointer; user-select: none; font-size: 12px; color: var(--muted); }
+  .reasoning-head { cursor: pointer; user-select: none; font-size: calc(var(--text-size) - 1px); color: var(--muted); }
   .reasoning-head:hover { color: var(--fg); }
   .reasoning-body { margin: 4px 0; white-space: pre-wrap; max-height: 240px; overflow-y: auto; }
   .reasoning-body[hidden] { display: none; }
-  .reasoning-body pre { margin: 4px 0; white-space: pre-wrap; font-family: inherit; font-size: 12px; }
+  .reasoning-body pre { margin: 4px 0; white-space: pre-wrap; font-family: inherit; font-size: calc(var(--text-size) - 1px); }
   .msg .stream-cursor::after { content: "▍"; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 
@@ -173,7 +179,8 @@
   .tool .targs { padding: 0 8px 6px; }
   .tool .tlabel { font-size: 11px; color: var(--muted); margin: 4px 0 2px; }
   .tool pre { margin: 4px 0; padding: 6px 8px; background: var(--input-bg); border-radius: 3px;
-              white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+              white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family, monospace);
+              font-size: calc(var(--text-size) - 1px);
               position: relative; padding-right: 56px; }
 
   /* bridge metrics: "+N-M" diff chips (always visible on the fold row) and
@@ -200,8 +207,8 @@
 
   /* markdown headings / em / del (from the grafted micromark engine) */
   .md-h1, .md-h2, .md-h3, .md-h4, .md-h5, .md-h6 { margin: 10px 0 4px; font-weight: 700; line-height: 1.35; }
-  .md-h1 { font-size: 17px; } .md-h2 { font-size: 15px; } .md-h3 { font-size: 14px; }
-  .md-h4, .md-h5, .md-h6 { font-size: 13px; }
+  .md-h1 { font-size: calc(var(--text-size) + 4px); } .md-h2 { font-size: calc(var(--text-size) + 2px); } .md-h3 { font-size: calc(var(--text-size) + 1px); }
+  .md-h4, .md-h5, .md-h6 { font-size: var(--text-size); }
   .body em { font-style: italic; }
   .body del { color: var(--muted); }
 
@@ -929,6 +936,17 @@
       if (state.items[i].kind === "tool" && state.items[i].callId === cid) return state.items[i];
     }
     return null;
+  }
+
+  /* dshVsc.textSize: the transcript's base font size. The stylesheet owns every
+     derived size (code blocks and reasoning sit one px below the body), so this
+     only ever sets one CSS variable. Clamped here as well as in the host: the
+     value lands in CSS and must never be able to shrink the panel away. */
+  function applyTextSize(px) {
+    var n = Number(px);
+    n = isFinite(n) ? Math.min(48, Math.max(8, Math.round(n))) : 13;
+    state.textSize = n;
+    document.documentElement.style.setProperty("--text-size", n + "px");
   }
 
   function applyEvent(ev) {
@@ -2302,6 +2320,9 @@
         // "history" (terminal) or "caret" (editor-style arrows).
         state.promptArrowKeys = msg.promptArrowKeys === "caret" ? "caret" : "history";
         state.messageTimestamps = msg.messageTimestamps !== false;
+        // Base transcript size rides the state frame, so a fresh panel opens at
+        // the configured size instead of waiting for a config push.
+        applyTextSize(msg.textSize);
         // Renderer-side cap for inline `data:` images (see src/panel/renderer.ts).
         window.__DSH_MAX_DATA_URL__ = state.maxAttachBytes;
         state.sessions = msg.sessions || [];
@@ -2419,6 +2440,7 @@
         // Targeted push (see NativePanelProvider.setExtensionSetting).
         state.promptArrowKeys = msg.promptArrowKeys === "caret" ? "caret" : "history";
         state.messageTimestamps = msg.messageTimestamps !== false;
+        applyTextSize(msg.textSize);
         state.maxAttachBytes = msg.maxAttachBytes || 0;
         window.__DSH_MAX_DATA_URL__ = state.maxAttachBytes;
         // Re-draw so a timestamps toggle applies without a reload.

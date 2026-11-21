@@ -419,6 +419,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         maxAttachBytes: this.maxAttachBytes() ?? null,
         messageTimestamps: this.timestampsEnabled(),
         promptArrowKeys: this.promptArrowMode(),
+        textSize: this.textSizePx(),
         activeSessionId: null,
       });
       return;
@@ -1471,6 +1472,19 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
     return vscode.workspace.getConfiguration("dshVsc").get<boolean>("messageTimestamps", true) !== false;
   }
 
+  /** Transcript text size in px (dshVsc.textSize), clamped to the 8–48 the
+   *  setting advertises: the value reaches CSS directly, so a hand-edited
+   *  settings.json must not be able to shrink the panel out of existence. */
+  private textSizePx(): number {
+    return this.clampTextSize(vscode.workspace.getConfiguration("dshVsc").get<number>("textSize", 13));
+  }
+
+  /** Round to a whole pixel and keep it inside 8–48; garbage falls back to 13. */
+  private clampTextSize(value: unknown): number {
+    const n = Math.round(Number(value));
+    return Number.isFinite(n) ? Math.min(48, Math.max(8, n)) : 13;
+  }
+
   private postState(): void {
     this.post({
       type: "state",
@@ -1482,6 +1496,8 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       maxAttachBytes: this.maxAttachBytes() ?? null,
         messageTimestamps: this.timestampsEnabled(),
         promptArrowKeys: this.promptArrowMode(),
+      // Base transcript font size; the panel turns it into a CSS variable.
+      textSize: this.textSizePx(),
       // live title event wins; otherwise the projection title from session.list
       sessions: this.sessions.map((s) => ({ ...s, title: this.titles.get(s.sessionId) ?? s.title })),
       // Workspace rows in host order: the picker groups by these, and a session
@@ -1568,6 +1584,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
       promptArrowKeys: this.promptArrowMode(),
       maxAttachBytes: this.maxAttachBytes() ?? null,
         messageTimestamps: this.timestampsEnabled(),
+      textSize: this.textSizePx(),
     });
     this.postState();
   }
@@ -1685,6 +1702,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
           promptArrowKeys: cfg.get<string>("promptArrowKeys", "history"),
         messageTimestamps: cfg.get<boolean>("messageTimestamps", true),
           attachSizeLimit: cfg.get<boolean>("attachSizeLimit", true),
+          textSize: this.textSizePx(),
         },
       });
     } catch {
@@ -1693,17 +1711,24 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async setExtensionSetting(key: string, value: string | number | boolean): Promise<void> {
-    const allowed: Record<string, "language" | "promptArrowKeys" | "messageTimestamps" | "attachSizeLimit"> = {
+    const allowed: Record<
+      string,
+      "language" | "promptArrowKeys" | "messageTimestamps" | "attachSizeLimit" | "textSize"
+    > = {
       language: "language",
       promptArrowKeys: "promptArrowKeys",
       messageTimestamps: "messageTimestamps",
       attachSizeLimit: "attachSizeLimit",
+      textSize: "textSize",
     };
     const setting = allowed[key];
     if (!setting) {
       this.postSettingsError(`unknown setting: ${key}`);
       return;
     }
+    // The size dropdown only ever sends 8-48, but settings.json is hand-editable
+    // and this value ends up in CSS: clamp it before it is written.
+    if (setting === "textSize") value = this.clampTextSize(value);
     try {
       await vscode.workspace.getConfiguration("dshVsc").update(setting, value, vscode.ConfigurationTarget.Global);
       this.log(`setting ${setting} = ${String(value)}`);
@@ -1714,6 +1739,7 @@ export class NativePanelProvider implements vscode.WebviewViewProvider {
         promptArrowKeys: this.promptArrowMode(),
         maxAttachBytes: this.maxAttachBytes() ?? null,
         messageTimestamps: this.timestampsEnabled(),
+        textSize: this.textSizePx(),
       });
       this.postExtensionSettings();
       this.postSettingsSaved(t("已保存"));
