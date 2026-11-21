@@ -112,6 +112,7 @@ No API key is needed here: the key stays on the DSH side. The extension is a sha
 | `dshVsc.messageTimestamps` | `true` | Wall-clock times in the transcript: every user message, and each turn as "Round N · HH:MM". Reads the session log's own event times, so history replays identically. |
 | `dshVsc.promptArrowKeys` | `history` | `history` = terminal Up/Down through previous prompts; `caret` = Up/Down move the cursor in the draft. |
 | `dshVsc.attachSizeLimit` | `true` | Cap anything read on the panel's behalf (path reads, clipboard images, dropped images) at 50 MB. Off removes the limit entirely. |
+| `dshVsc.textSize` | `13` | Base transcript font size in px, 8–48 (clamped). Scales message text, reasoning and code blocks; the header, composer and status line keep their own sizes. Also set from the Settings tab. |
 
 ## Notes
 

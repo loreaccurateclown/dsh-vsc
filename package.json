@@ -184,6 +184,13 @@
           "type": "boolean",
           "default": true,
           "description": "Cap anything this extension reads on your behalf — images referenced by path, images pasted from the clipboard, images dropped on the panel — at 50 MB. Turn it off to remove the limit entirely (you know what you are doing). This is a transport guard only: the harness still applies its own admission limits to images, and stores generic files verbatim regardless."
+        },
+        "dshVsc.textSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 8,
+          "maximum": 48,
+          "description": "Base transcript text size in pixels: message text, reasoning, and code blocks. The panel's header, composer and status line keep their own sizes, so the chrome does not grow with the conversation. Values outside 8–48 are clamped. Also settable from the panel's Settings tab."
         }
       }
     }

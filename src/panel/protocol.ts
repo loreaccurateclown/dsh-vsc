@@ -50,6 +50,8 @@ export type HostMessage =
       promptArrowKeys?: "history" | "caret";
       /** Show times in the transcript (user messages + turn labels). */
       messageTimestamps?: boolean;
+      /** Base transcript font size in px (dshVsc.textSize), clamped 8-48. */
+      textSize?: number;
       activeSessionId: string | null;
     }
   | { type: "event"; sessionId: string; event: PanelEvent }
@@ -120,6 +122,8 @@ export type HostMessage =
       promptArrowKeys: "history" | "caret";
       maxAttachBytes: number | null;
       messageTimestamps: boolean;
+      /** Base transcript font size in px (dshVsc.textSize), clamped 8-48. */
+      textSize: number;
     }
   | {
       /** Resolution of an async clipboard write; `ok=false` carries the reason. */

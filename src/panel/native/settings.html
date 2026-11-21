@@ -107,6 +107,10 @@
           <option value="off">off</option>
         </select>
       </div>
+      <div class="row">
+        <label>Transcript text size</label>
+        <select id="ext-text-size"></select>
+      </div>
     </div>
     <div class="card">
       <h3>默认模型 <span class="mono">(agent-default-model)</span></h3>
@@ -459,6 +463,8 @@
     if (limit) limit.value = value.attachSizeLimit === false ? "off" : "on";
     var stamps = $("ext-timestamps");
     if (stamps) stamps.value = value.messageTimestamps === false ? "off" : "on";
+    var size = $("ext-text-size");
+    if (size) size.value = String(value.textSize || 13);
   }
 
   function pushExtensionSetting(key, value) {
@@ -471,6 +477,18 @@
   });
   $("ext-attach-limit").addEventListener("change", function () {
     pushExtensionSetting("attachSizeLimit", this.value === "on");
+  });
+
+  /* The range is data, not markup: 8-48 px, one option per pixel, built from a
+     single loop so the row and the setting cannot drift apart. */
+  for (var sizePx = 8; sizePx <= 48; sizePx++) {
+    var sizeOpt = document.createElement("option");
+    sizeOpt.value = String(sizePx);
+    sizeOpt.textContent = sizePx + " px";
+    $("ext-text-size").appendChild(sizeOpt);
+  }
+  $("ext-text-size").addEventListener("change", function () {
+    pushExtensionSetting("textSize", Number(this.value));
   });
 
   vscode.postMessage({ type: "settingsReady" });
